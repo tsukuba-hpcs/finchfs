@@ -66,7 +66,7 @@ dump_addrfile(finchfsd_ctx_t *ctx)
 		close(fd);
 		return (-1);
 	}
-	ucp_address_t *addr_allprocs = malloc(addr_len * ctx->nprocs);
+	uint8_t *addr_allprocs = malloc(addr_len * ctx->nprocs);
 	MPI_Allgather(addr, addr_len, MPI_BYTE, addr_allprocs, addr_len,
 		      MPI_BYTE, MPI_COMM_WORLD);
 	ucp_worker_release_address(ctx->ucp_worker, addr);
