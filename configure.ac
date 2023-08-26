@@ -5,12 +5,17 @@ AC_INIT([FINCHFS], [0.0.1])
 AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 AC_CONFIG_SRCDIR([README.md])
 AC_CONFIG_HEADERS([lib/config.h])
+AC_CONFIG_MACRO_DIRS([m4])
 
 # Checks for programs.
 AC_PROG_CC
 AM_PROG_CC_C_O
 AM_PROG_AR
 LT_INIT
+
+# Checks for libraries.
+PKG_CHECK_MODULES([MPI], [ompi])
+PKG_CHECK_MODULES([UCX], [ucx])
 
 # Checks for header files.
 AC_CHECK_HEADERS([stdint.h])
@@ -23,5 +28,5 @@ AC_FUNC_MALLOC
 AC_FUNC_REALLOC
 AC_CHECK_FUNCS([])
 
-AC_CONFIG_FILES([Makefile lib/Makefile pkgconfig/finchfs.pc pkgconfig/Makefile])
+AC_CONFIG_FILES([Makefile lib/Makefile finchfsd/Makefile pkgconfig/finchfs.pc pkgconfig/Makefile])
 AC_OUTPUT

@@ -1,3 +1,4 @@
 EXTRA_DIST = README.md
+ACLOCAL_AMFLAGS = -I m4
 
-SUBDIRS = lib pkgconfig
+SUBDIRS = lib finchfsd pkgconfig
