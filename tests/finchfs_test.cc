@@ -6,10 +6,12 @@ extern "C" {
 
 TEST(FinchfsTest, OpenClose)
 {
+	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
 	fd = finchfs_open("/hello_world", 0);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
 }
 
 int

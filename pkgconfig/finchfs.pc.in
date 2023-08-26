@@ -6,5 +6,6 @@ includedir=@includedir@
 Name: @PACKAGE_NAME@
 Description: FINCHFS ad hoc parallel and distributed file system
 Version: @VERSION@
+Requires: ucx
 Cflags: -I${includedir}
 Libs: -L${libdir} -lfinchfs

@@ -42,6 +42,13 @@ dump_addrfile(finchfsd_ctx_t *ctx)
 	ucs_status_t status;
 	int fd;
 
+	if ((status = ucp_worker_get_address(ctx->ucp_worker, &addr,
+					     &addr_len)) != UCS_OK) {
+		log_error("ucp_worker_get_address() failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+
 	fd = creat(DUMP_ADDR_FILE, S_IWUSR | S_IRUSR);
 	if (fd < 0) {
 		log_error("creat() failed: %s", strerror(errno));
@@ -59,13 +66,6 @@ dump_addrfile(finchfsd_ctx_t *ctx)
 		return (-1);
 	}
 
-	if ((status = ucp_worker_get_address(ctx->ucp_worker, &addr,
-					     &addr_len)) != UCS_OK) {
-		log_error("ucp_worker_get_address() failed: %s",
-			  ucs_status_string(status));
-		close(fd);
-		return (-1);
-	}
 	uint8_t *addr_allprocs = malloc(addr_len * ctx->nprocs);
 	MPI_Allgather(addr, addr_len, MPI_BYTE, addr_allprocs, addr_len,
 		      MPI_BYTE, MPI_COMM_WORLD);

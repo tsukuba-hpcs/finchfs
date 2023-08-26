@@ -1,8 +1,8 @@
 lib_LTLIBRARIES = libfinchfs.la
 include_HEADERS = finchfs.h
-noinst_HEADERS = log.h
+noinst_HEADERS = log.h fs_rpc.h
 
-libfinchfs_la_SOURCES = finchfs.c log.c
+libfinchfs_la_SOURCES = finchfs.c log.c fs_client.c
 
-AM_CPPFLAGS = -Wall -pthread
-AM_LDFLAGS = -pthread
+AM_CPPFLAGS = -Wall -pthread @UCX_CFLAGS@
+AM_LDFLAGS = -pthread @UCX_LIBS@
