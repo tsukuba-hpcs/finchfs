@@ -1,0 +1,10 @@
+prefix=@prefix@
+exec_prefix=${prefix}
+libdir=@libdir@
+includedir=@includedir@
+
+Name: @PACKAGE_NAME@
+Description: FINCHFS ad hoc parallel and distributed file system
+Version: @VERSION@
+Cflags: -I${includedir}
+Libs: -L${libdir} -lfinchfs
