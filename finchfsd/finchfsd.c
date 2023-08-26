@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
+#include "config.h"
 #include "log.h"
 
 typedef struct {
@@ -31,6 +32,55 @@ handle_sig(void *arg)
 	log_debug("Caught signal %d, shutting down", sig);
 	__atomic_fetch_add(&ctx->shutdown, 1, __ATOMIC_SEQ_CST);
 	return (NULL);
+}
+
+int
+dump_addrfile(finchfsd_ctx_t *ctx)
+{
+	ucp_address_t *addr;
+	size_t addr_len;
+	ucs_status_t status;
+	int fd;
+
+	fd = creat(DUMP_ADDR_FILE, S_IWUSR | S_IRUSR);
+	if (fd < 0) {
+		log_error("creat() failed: %s", strerror(errno));
+		return (-1);
+	}
+	if (write(fd, &addr_len, sizeof(addr_len)) != sizeof(addr_len)) {
+		log_error("write() failed: %s", strerror(errno));
+		close(fd);
+		return (-1);
+	}
+	if (write(fd, &ctx->nprocs, sizeof(ctx->nprocs)) !=
+	    sizeof(ctx->nprocs)) {
+		log_error("write() failed: %s", strerror(errno));
+		close(fd);
+		return (-1);
+	}
+
+	if ((status = ucp_worker_get_address(ctx->ucp_worker, &addr,
+					     &addr_len)) != UCS_OK) {
+		log_error("ucp_worker_get_address() failed: %s",
+			  ucs_status_string(status));
+		close(fd);
+		return (-1);
+	}
+	ucp_address_t *addr_allprocs = malloc(addr_len * ctx->nprocs);
+	MPI_Allgather(addr, addr_len, MPI_BYTE, addr_allprocs, addr_len,
+		      MPI_BYTE, MPI_COMM_WORLD);
+	ucp_worker_release_address(ctx->ucp_worker, addr);
+
+	if (write(fd, addr_allprocs, addr_len * ctx->nprocs) !=
+	    addr_len * ctx->nprocs) {
+		log_error("write() failed: %s", strerror(errno));
+		free(addr_allprocs);
+		close(fd);
+		return (-1);
+	}
+	close(fd);
+	free(addr_allprocs);
+	return (0);
 }
 
 int
@@ -72,6 +122,12 @@ main(int argc, char **argv)
 	if ((status = ucp_worker_create(ctx.ucp_context, &ucp_worker_params,
 					&ctx.ucp_worker)) != UCS_OK) {
 		log_fatal("ucp_worker_create() failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+
+	if (dump_addrfile(&ctx)) {
+		log_fatal("dump_addrfile() failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}

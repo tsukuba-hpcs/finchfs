@@ -28,5 +28,7 @@ AC_FUNC_MALLOC
 AC_FUNC_REALLOC
 AC_CHECK_FUNCS([])
 
+AC_DEFINE([DUMP_ADDR_FILE], ["/tmp/finchfsd"], [File path to dump address to])
+
 AC_CONFIG_FILES([Makefile lib/Makefile finchfsd/Makefile pkgconfig/finchfs.pc pkgconfig/Makefile])
 AC_OUTPUT
