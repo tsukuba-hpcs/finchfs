@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
+#include "log.h"
 
 typedef struct {
 	ucp_context_h ucp_context;
@@ -25,9 +26,9 @@ handle_sig(void *arg)
 {
 	int sig;
 	finchfsd_ctx_t *ctx = (finchfsd_ctx_t *)arg;
-	fprintf(stderr, "Waiting for signal\n");
+	log_debug("Waiting for signal");
 	sigwait(&sigset, &sig);
-	fprintf(stderr, "Caught signal %d, shutting down\n", sig);
+	log_debug("Caught signal %d, shutting down", sig);
 	__atomic_fetch_add(&ctx->shutdown, 1, __ATOMIC_SEQ_CST);
 	return (NULL);
 }
@@ -45,8 +46,7 @@ main(int argc, char **argv)
 	sigaddset(&sigset, SIGINT);
 	sigaddset(&sigset, SIGTERM);
 	if (pthread_sigmask(SIG_BLOCK, &sigset, NULL)) {
-		fprintf(stderr, "pthread_sigmask() failed: %s\n",
-			strerror(errno));
+		log_error("pthread_sigmask() failed: %s", strerror(errno));
 		return (-1);
 	}
 	pthread_create(&handler_thread, NULL, handle_sig, &ctx);
@@ -62,9 +62,7 @@ main(int argc, char **argv)
 	};
 	if ((status = ucp_init(&ucp_params, NULL, &ctx.ucp_context)) !=
 	    UCS_OK) {
-		fprintf(stderr, "ucp_init() failed: %s\n",
-			ucs_status_string(status));
-		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_SERVICE);
+		log_fatal("ucp_init() failed: %s", ucs_status_string(status));
 		return (-1);
 	}
 
@@ -73,9 +71,8 @@ main(int argc, char **argv)
 	    .thread_mode = UCS_THREAD_MODE_SINGLE};
 	if ((status = ucp_worker_create(ctx.ucp_context, &ucp_worker_params,
 					&ctx.ucp_worker)) != UCS_OK) {
-		fprintf(stderr, "ucp_worker_create() failed: %s\n",
-			ucs_status_string(status));
-		MPI_Abort(MPI_COMM_WORLD, MPI_ERR_SERVICE);
+		log_fatal("ucp_worker_create() failed: %s",
+			  ucs_status_string(status));
 		return (-1);
 	}
 

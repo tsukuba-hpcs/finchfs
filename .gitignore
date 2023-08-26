@@ -16,8 +16,8 @@ lib/config.h
 lib/stamp-h1
 lib/.deps
 lib/.libs
-lib/finchfs.lo
-lib/finchfs.o
+lib/*.lo
+lib/*.o
 lib/libfinchfs.la
 pkgconfig/finchfs.pc
 Makefile
