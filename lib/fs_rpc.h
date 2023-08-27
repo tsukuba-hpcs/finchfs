@@ -12,6 +12,7 @@ int fs_server_term();
 typedef enum {
 	FINCH_OK = 0,
 	FINCH_INPROGRESS = 1,
+	FINCH_ENOENT = -2,
 	FINCH_EEXIST = -17,
 } finch_status_t;
 

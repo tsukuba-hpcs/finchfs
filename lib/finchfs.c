@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include "finchfs.h"
 #include "fs_rpc.h"
+#include "path.h"
 #include "log.h"
 
 int
@@ -35,7 +36,11 @@ finchfs_close(int fd)
 int
 finchfs_mkdir(const char *path, mode_t mode)
 {
-	return fs_rpc_mkdir(path, mode);
+	char *p = canonical_path(path);
+	if (p == NULL) {
+		return (-1);
+	}
+	return fs_rpc_mkdir(p, mode);
 }
 
 int

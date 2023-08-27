@@ -1,7 +1,32 @@
+/*
+Copyright (c) 2021-2023 Osamu Tatebe.  All Rights Reserved.
+
+The authors hereby grant permission to use, copy, modify, and
+distribute this software and its documentation for any purpose,
+provided that existing copyright notices are retained in all copies
+and that this notice is included verbatim in any distributions.  The
+name of the authors may not be used to endorse or promote products
+derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED.  IN NO EVENT SHALL THE AUTHORS OR DISTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE
+OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, ITS
+DOCUMENTATION, OR ANY DERIVATIVES THEREOF, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+*/
 #include <ucp/api/ucp.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include "fs_rpc.h"
 #include "hashmap.h"
 #include "log.h"
@@ -15,6 +40,10 @@ typedef struct {
 	mode_t mode;
 	struct hashmap *entries;
 } dirtable_t;
+
+typedef struct {
+	char *entryname;
+} direntry_t;
 
 static int
 dirtable_compare(const void *a, const void *b, void *udata)
@@ -31,6 +60,21 @@ dirtable_hash(const void *item, uint64_t seed0, uint64_t seed1)
 	return hashmap_sip(d->dirname, strlen(d->dirname), seed0, seed1);
 }
 
+static int
+direntry_compare(const void *a, const void *b, void *udata)
+{
+	const direntry_t *da = a;
+	const direntry_t *db = b;
+	return strcmp(da->entryname, db->entryname);
+}
+
+static uint64_t
+direntry_hash(const void *item, uint64_t seed0, uint64_t seed1)
+{
+	const direntry_t *d = item;
+	return hashmap_sip(d->entryname, strlen(d->entryname), seed0, seed1);
+}
+
 static void
 fs_rpc_mkdir_recv_reply_cb(void *request, ucs_status_t status, void *user_data)
 {
@@ -41,6 +85,26 @@ fs_rpc_mkdir_recv_reply_cb(void *request, ucs_status_t status, void *user_data)
 	free(iov_req->header);
 	free(iov_req->iov[0].buffer);
 	free(iov_req);
+}
+
+static char *
+fs_dirname(const char *path)
+{
+	size_t p = strlen(path) - 1;
+	char *r;
+
+	while (p > 0 && path[p] != '/')
+		--p;
+
+	r = malloc(p + 1);
+	if (r == NULL) {
+		log_error("fs_dirname: no memory");
+		return (NULL);
+	}
+	strncpy(r, path, p);
+	r[p] = '\0';
+	log_debug("fs_dirname: path %s dirname %s", path, r);
+	return (r);
 }
 
 ucs_status_t
@@ -58,8 +122,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	offset += path_len;
 	mode = *(mode_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
-	log_debug("fs_rpc_mkdir_recv() called path=%s header=%p", path,
-		  *(void **)header);
+	log_debug("fs_rpc_mkdir_recv() called path=%s", path);
 
 	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
 	user_data->header = malloc(sizeof(void *));
@@ -81,35 +144,30 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	    .user_data = user_data,
 	};
 
+	char *pardir = fs_dirname(path);
+
 	dirtable_t *dirt =
 	    hashmap_get(ctx->dirtable, &(dirtable_t){.dirname = path});
-
-	if (dirt != NULL) {
+	dirtable_t *pardirt =
+	    hashmap_get(ctx->dirtable, &(dirtable_t){.dirname = pardir});
+	if (pardirt == NULL) {
+		log_debug("fs_rpc_mkdir_recv() parent path=%s does not exist",
+			  pardir);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else if (dirt != NULL) {
 		log_debug("fs_rpc_mkdir_recv() path=%s already exists", path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_EEXIST;
-		ucs_status_ptr_t req = ucp_am_send_nbx(
-		    param->reply_ep, RPC_MKDIR_REP, user_data->header,
-		    sizeof(void *), user_data->iov, user_data->n, &rparam);
-
-		if (req == NULL) {
-			free(user_data->header);
-			free(user_data->iov[0].buffer);
-			free(user_data);
-		} else if (UCS_PTR_IS_ERR(req)) {
-			log_error("ucp_am_send_nbx() failed: %s",
-				  ucs_status_string(UCS_PTR_STATUS(req)));
-			free(user_data->header);
-			free(user_data->iov[0].buffer);
-			free(user_data);
-			return (UCS_PTR_STATUS(req));
-		}
-		return (UCS_OK);
+	} else {
+		log_debug("fs_rpc_mkdir_recv() create path=%s", path);
+		hashmap_set(ctx->dirtable,
+			    &(dirtable_t){.dirname = strdup(path),
+					  .mode = mode,
+					  .entries = hashmap_new(
+					      sizeof(direntry_t), 0, 0, 0,
+					      direntry_hash, direntry_compare,
+					      NULL, NULL)});
+		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 	}
-	log_debug("fs_rpc_mkdir_recv() create path=%s", path);
-	hashmap_set(ctx->dirtable, &(dirtable_t){.dirname = strdup(path),
-						 .mode = mode,
-						 .entries = NULL});
-	*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 	ucs_status_ptr_t req = ucp_am_send_nbx(
 	    param->reply_ep, RPC_MKDIR_REP, user_data->header, sizeof(void *),
 	    user_data->iov, user_data->n, &rparam);
@@ -134,6 +192,13 @@ fs_server_init(ucp_worker_h worker)
 	all_ctx.dirtable =
 	    hashmap_new(sizeof(dirtable_t), 0, 0, 0, dirtable_hash,
 			dirtable_compare, NULL, NULL);
+	hashmap_set(all_ctx.dirtable,
+		    &(dirtable_t){.dirname = "",
+				  .mode = S_IFDIR | S_IRWXU,
+				  .entries = hashmap_new(sizeof(direntry_t), 0,
+							 0, 0, direntry_hash,
+							 direntry_compare, NULL,
+							 NULL)});
 
 	ucs_status_t status;
 	ucp_am_handler_param_t mkdir_param = {
@@ -156,6 +221,12 @@ fs_server_init(ucp_worker_h worker)
 int
 fs_server_term()
 {
+	size_t iter = 0;
+	void *item;
+	while (hashmap_iter(all_ctx.dirtable, &iter, &item)) {
+		const dirtable_t *table = item;
+		hashmap_free(table->entries);
+	}
 	hashmap_free(all_ctx.dirtable);
 	return (0);
 }

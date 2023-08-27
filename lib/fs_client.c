@@ -224,7 +224,6 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 	void **rets_addr = malloc(sizeof(void *) * env.nprocs);
 	for (int i = 0; i < env.nprocs; i++) {
 		rets_addr[i] = &rets[i];
-		log_debug("rets_addr[%d] = %p", i, rets_addr[i]);
 	}
 
 	ucp_request_param_t rparam = {

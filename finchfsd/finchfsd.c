@@ -143,6 +143,8 @@ main(int argc, char **argv)
 		ucp_worker_progress(ctx.ucp_worker);
 	}
 
+	fs_server_term();
+
 	ucp_worker_destroy(ctx.ucp_worker);
 	ucp_cleanup(ctx.ucp_context);
 

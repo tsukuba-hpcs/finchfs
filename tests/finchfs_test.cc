@@ -31,6 +31,14 @@ TEST(FinchfsTest, Mkdir2)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Mkdir3)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/foo/bar/baz", 0), -1);
+	EXPECT_EQ(errno, ENOENT);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {
