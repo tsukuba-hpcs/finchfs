@@ -1,5 +1,5 @@
 sbin_PROGRAMS = finchfsd
-finchfsd_SOURCES = finchfsd.c
+finchfsd_SOURCES = finchfsd.c fs_server.c
 
 AM_CPPFLAGS = -Wall -pthread -I$(top_srcdir)/lib @MPI_CFLAGS@ @UCX_CFLAGS@
 AM_LDFLAGS = -pthread

@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include "config.h"
+#include "fs_rpc.h"
 #include "log.h"
 
 typedef struct {
@@ -128,6 +129,12 @@ main(int argc, char **argv)
 
 	if (dump_addrfile(&ctx)) {
 		log_fatal("dump_addrfile() failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+
+	if (fs_server_init(ctx.ucp_worker)) {
+		log_fatal("fs_server_init() failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}

@@ -1,4 +1,6 @@
 #include <stdint.h>
+#include <ucp/api/ucp.h>
+#include <fcntl.h>
 #include "finchfs.h"
 #include "fs_rpc.h"
 #include "log.h"
@@ -26,6 +28,18 @@ finchfs_open(const char *path, int32_t flags)
 
 int
 finchfs_close(int fd)
+{
+	return 0;
+}
+
+int
+finchfs_mkdir(const char *path, mode_t mode)
+{
+	return fs_rpc_mkdir(path, mode);
+}
+
+int
+finchfs_rmdir(const char *path)
 {
 	return 0;
 }

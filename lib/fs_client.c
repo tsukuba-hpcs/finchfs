@@ -147,3 +147,58 @@ fs_client_term(void)
 
 	return (0);
 }
+
+static int
+path_to_target_hash(const char *path, int div)
+{
+	long h = 0;
+	char *head = strdup(path);
+	char *next;
+	long n;
+	for (char *p = head; *p != '\0'; p = next) {
+		n = strtol(p, &next, 10);
+		if (next == p) {
+			h += *p;
+			next++;
+			continue;
+		}
+		h += n;
+	}
+	free(head);
+	return (int)(h % div);
+}
+
+int
+fs_rpc_mkdir(const char *path, mode_t mode)
+{
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = (void *)path;
+	iov[0].length = strlen(path) + 1;
+	iov[1].buffer = &mode;
+	iov[1].length = sizeof(mode_t);
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t req;
+	int target = path_to_target_hash(path, env.nprocs);
+	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_MKDIR_REQ, NULL, 0, iov,
+			      2, &rparam);
+
+	ucs_status_t status;
+	do {
+		ucp_worker_progress(env.ucp_worker);
+		status = ucp_request_check_status(req);
+	} while (status == UCS_INPROGRESS);
+	if (status != UCS_OK) {
+		log_error("fs_rpc_mkdir: ucp_am_send_nbx() failed: %s",
+			  ucs_status_string(UCS_PTR_STATUS(req)));
+		return (-1);
+	}
+	log_debug("fs_rpc_mkdir: ucp_am_send_nbx() succeeded");
+	return (0);
+}
