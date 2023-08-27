@@ -127,14 +127,14 @@ main(int argc, char **argv)
 		return (-1);
 	}
 
-	if (dump_addrfile(&ctx)) {
-		log_fatal("dump_addrfile() failed: %s",
+	if (fs_server_init(ctx.ucp_worker)) {
+		log_fatal("fs_server_init() failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}
 
-	if (fs_server_init(ctx.ucp_worker)) {
-		log_fatal("fs_server_init() failed: %s",
+	if (dump_addrfile(&ctx)) {
+		log_fatal("dump_addrfile() failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}

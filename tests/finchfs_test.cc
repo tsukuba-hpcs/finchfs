@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <errno.h>
 #include <ucp/api/ucp.h>
 #include <gtest/gtest.h>
 extern "C" {
@@ -19,6 +20,14 @@ TEST(FinchfsTest, Mkdir)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	EXPECT_EQ(finchfs_mkdir("/foo", 0), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Mkdir2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/foo", 0), -1);
+	EXPECT_EQ(errno, EEXIST);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 

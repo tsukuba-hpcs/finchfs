@@ -1,18 +1,140 @@
 #include <ucp/api/ucp.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
 #include "fs_rpc.h"
+#include "hashmap.h"
 #include "log.h"
+
+struct worker_ctx {
+	struct hashmap *dirtable;
+} all_ctx;
+
+typedef struct {
+	char *dirname;
+	mode_t mode;
+	struct hashmap *entries;
+} dirtable_t;
+
+static int
+dirtable_compare(const void *a, const void *b, void *udata)
+{
+	const dirtable_t *da = a;
+	const dirtable_t *db = b;
+	return strcmp(da->dirname, db->dirname);
+}
+
+static uint64_t
+dirtable_hash(const void *item, uint64_t seed0, uint64_t seed1)
+{
+	const dirtable_t *d = item;
+	return hashmap_sip(d->dirname, strlen(d->dirname), seed0, seed1);
+}
+
+static void
+fs_rpc_mkdir_recv_reply_cb(void *request, ucs_status_t status, void *user_data)
+{
+	log_debug("fs_rpc_mkdir_recv_reply_cb() called status=%s",
+		  ucs_status_string(status));
+	ucp_request_free(request);
+	iov_req_t *iov_req = user_data;
+	free(iov_req->header);
+	free(iov_req->iov[0].buffer);
+	free(iov_req);
+}
 
 ucs_status_t
 fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 		  void *data, size_t length, const ucp_am_recv_param_t *param)
 {
-	log_debug("fs_rpc_mkdir_recv() called");
+	struct worker_ctx *ctx = (struct worker_ctx *)arg;
+	int path_len;
+	char *path;
+	mode_t mode;
+	size_t offset = 0;
+	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(path_len);
+	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += path_len;
+	mode = *(mode_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+
+	log_debug("fs_rpc_mkdir_recv() called path=%s header=%p", path,
+		  *(void **)header);
+
+	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+	user_data->header = malloc(sizeof(void *));
+	memcpy(user_data->header, header, sizeof(void *));
+	user_data->n = 1;
+	user_data->iov[0].buffer = malloc(sizeof(int));
+	user_data->iov[0].length = sizeof(int);
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
+		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
+	    .cb =
+		{
+		    .send = fs_rpc_mkdir_recv_reply_cb,
+		},
+	    .flags = UCP_AM_SEND_FLAG_EAGER,
+	    .datatype = UCP_DATATYPE_IOV,
+	    .user_data = user_data,
+	};
+
+	dirtable_t *dirt =
+	    hashmap_get(ctx->dirtable, &(dirtable_t){.dirname = path});
+
+	if (dirt != NULL) {
+		log_debug("fs_rpc_mkdir_recv() path=%s already exists", path);
+		*(int *)(user_data->iov[0].buffer) = FINCH_EEXIST;
+		ucs_status_ptr_t req = ucp_am_send_nbx(
+		    param->reply_ep, RPC_MKDIR_REP, user_data->header,
+		    sizeof(void *), user_data->iov, user_data->n, &rparam);
+
+		if (req == NULL) {
+			free(user_data->header);
+			free(user_data->iov[0].buffer);
+			free(user_data);
+		} else if (UCS_PTR_IS_ERR(req)) {
+			log_error("ucp_am_send_nbx() failed: %s",
+				  ucs_status_string(UCS_PTR_STATUS(req)));
+			free(user_data->header);
+			free(user_data->iov[0].buffer);
+			free(user_data);
+			return (UCS_PTR_STATUS(req));
+		}
+		return (UCS_OK);
+	}
+	log_debug("fs_rpc_mkdir_recv() create path=%s", path);
+	hashmap_set(ctx->dirtable, &(dirtable_t){.dirname = strdup(path),
+						 .mode = mode,
+						 .entries = NULL});
+	*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+	ucs_status_ptr_t req = ucp_am_send_nbx(
+	    param->reply_ep, RPC_MKDIR_REP, user_data->header, sizeof(void *),
+	    user_data->iov, user_data->n, &rparam);
+	if (req == NULL) {
+		free(user_data->header);
+		free(user_data->iov[0].buffer);
+		free(user_data);
+	} else if (UCS_PTR_IS_ERR(req)) {
+		log_error("ucp_am_send_nbx() failed: %s",
+			  ucs_status_string(UCS_PTR_STATUS(req)));
+		free(user_data->header);
+		free(user_data->iov[0].buffer);
+		free(user_data);
+		return (UCS_PTR_STATUS(req));
+	}
 	return (UCS_OK);
 }
 
 int
 fs_server_init(ucp_worker_h worker)
 {
+	all_ctx.dirtable =
+	    hashmap_new(sizeof(dirtable_t), 0, 0, 0, dirtable_hash,
+			dirtable_compare, NULL, NULL);
+
 	ucs_status_t status;
 	ucp_am_handler_param_t mkdir_param = {
 	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
@@ -20,7 +142,7 @@ fs_server_init(ucp_worker_h worker)
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_MKDIR_REQ,
 	    .cb = fs_rpc_mkdir_recv,
-	    .arg = NULL,
+	    .arg = &all_ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(worker, &mkdir_param)) !=
 	    UCS_OK) {
@@ -28,4 +150,12 @@ fs_server_init(ucp_worker_h worker)
 			  ucs_status_string(status));
 		return (-1);
 	}
+	return (0);
+}
+
+int
+fs_server_term()
+{
+	hashmap_free(all_ctx.dirtable);
+	return (0);
 }
