@@ -159,13 +159,12 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 		*(int *)(user_data->iov[0].buffer) = FINCH_EEXIST;
 	} else {
 		log_debug("fs_rpc_mkdir_recv() create path=%s", path);
-		hashmap_set(ctx->dirtable,
-			    &(dirtable_t){.dirname = strdup(path),
-					  .mode = mode,
-					  .entries = hashmap_new(
-					      sizeof(direntry_t), 0, 0, 0,
-					      direntry_hash, direntry_compare,
-					      NULL, NULL)});
+		struct hashmap *entries =
+		    hashmap_new(sizeof(direntry_t), 0, 0, 0, direntry_hash,
+				direntry_compare, NULL, NULL);
+		dirtable_t dirt = {
+		    .dirname = strdup(path), .mode = mode, .entries = entries};
+		hashmap_set(ctx->dirtable, &dirt);
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 	}
 	ucs_status_ptr_t req = ucp_am_send_nbx(
@@ -192,13 +191,12 @@ fs_server_init(ucp_worker_h worker)
 	all_ctx.dirtable =
 	    hashmap_new(sizeof(dirtable_t), 0, 0, 0, dirtable_hash,
 			dirtable_compare, NULL, NULL);
-	hashmap_set(all_ctx.dirtable,
-		    &(dirtable_t){.dirname = "",
-				  .mode = S_IFDIR | S_IRWXU,
-				  .entries = hashmap_new(sizeof(direntry_t), 0,
-							 0, 0, direntry_hash,
-							 direntry_compare, NULL,
-							 NULL)});
+	struct hashmap *entries =
+	    hashmap_new(sizeof(direntry_t), 0, 0, 0, direntry_hash,
+			direntry_compare, NULL, NULL);
+	dirtable_t dirt = {
+	    .dirname = "", .mode = S_IFDIR | S_IRWXU, .entries = entries};
+	hashmap_set(all_ctx.dirtable, &dirt);
 
 	ucs_status_t status;
 	ucp_am_handler_param_t mkdir_param = {
