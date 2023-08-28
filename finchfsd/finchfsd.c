@@ -90,7 +90,7 @@ main(int argc, char **argv)
 {
 	finchfsd_ctx_t ctx = {
 	    .shutdown = 0,
-	    .db_dir = "/tmp",
+	    .db_dir = "/tmp/finch_data",
 	};
 	ucs_status_t status;
 	pthread_t handler_thread;

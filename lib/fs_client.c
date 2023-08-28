@@ -26,13 +26,21 @@ fs_rpc_mkdir_reply(void *arg, const void *header, size_t header_length,
 	return (UCS_OK);
 }
 
+typedef struct {
+	int ret;
+	uint32_t ino;
+} inode_create_handle_t;
+
 ucs_status_t
 fs_rpc_inode_create_reply(void *arg, const void *header, size_t header_length,
 			  void *data, size_t length,
 			  const ucp_am_recv_param_t *param)
 {
-	void *ret = *(void **)header;
-	memcpy(ret, data, sizeof(int));
+	inode_create_handle_t *handle = *(inode_create_handle_t **)header;
+	size_t offset = 0;
+	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(int);
+	handle->ino = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 	return (UCS_OK);
 }
 
@@ -321,8 +329,10 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size)
 	iov[3].buffer = &chunk_size;
 	iov[3].length = sizeof(chunk_size);
 
-	int ret = FINCH_INPROGRESS;
-	void *ret_addr = &ret;
+	inode_create_handle_t handle;
+	handle.ret = FINCH_INPROGRESS;
+	handle.ino = 0;
+	void *handle_addr = &handle;
 
 	ucp_request_param_t rparam = {
 	    .op_attr_mask =
@@ -332,8 +342,9 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size)
 	};
 
 	ucs_status_ptr_t req;
-	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_CREATE_REQ,
-			      &ret_addr, sizeof(void *), iov, 4, &rparam);
+	req =
+	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_CREATE_REQ,
+			    &handle_addr, sizeof(handle_addr), iov, 4, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
@@ -351,15 +362,15 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size)
 	}
 
 	log_debug("fs_rpc_inode_create: ucp_am_send_nbx() succeeded");
-	while (!all_ret_finish(&ret, 1)) {
+	while (!all_ret_finish(&handle.ret, 1)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
-	if (ret != FINCH_OK) {
+	if (handle.ret != FINCH_OK) {
 		log_error("fs_rpc_inode_create: create() failed: %s",
-			  strerror(-ret));
-		errno = -ret;
+			  strerror(-handle.ret));
+		errno = -handle.ret;
 		return (-1);
 	}
-	log_debug("fs_rpc_inode_create: succeeded");
+	log_debug("fs_rpc_inode_create: succeeded ino=%d", handle.ino);
 	return (0);
 }

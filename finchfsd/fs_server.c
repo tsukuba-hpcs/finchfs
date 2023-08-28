@@ -107,6 +107,7 @@ fs_rpc_inode_create_recv_reply_cb(void *request, ucs_status_t status,
 	iov_req_t *iov_req = user_data;
 	free(iov_req->header);
 	free(iov_req->iov[0].buffer);
+	free(iov_req->iov[1].buffer);
 	free(iov_req);
 }
 
@@ -148,8 +149,8 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	log_debug("fs_rpc_mkdir_recv() called path=%s", path);
 
 	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
-	user_data->header = malloc(sizeof(void *));
-	memcpy(user_data->header, header, sizeof(void *));
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
 	user_data->n = 1;
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
@@ -199,7 +200,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	free(pardir);
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_MKDIR_REP, user_data->header, sizeof(void *),
+	    param->reply_ep, RPC_MKDIR_REP, user_data->header, header_length,
 	    user_data->iov, user_data->n, &rparam);
 	if (req == NULL) {
 		free(user_data->header);
@@ -237,14 +238,18 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	offset += sizeof(mode);
 	chunk_size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
-	log_debug("fs_rpc_inode_create_recv() called path=%s", path);
+	log_debug("fs_rpc_inode_create_recv() called path=%s header_length=%d",
+		  path, header_length);
 
-	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
-	user_data->header = malloc(sizeof(void *));
-	memcpy(user_data->header, header, sizeof(void *));
-	user_data->n = 1;
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	user_data->n = 2;
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
+	user_data->iov[1].buffer = malloc(sizeof(uint32_t));
+	user_data->iov[1].length = sizeof(uint32_t);
 
 	ucp_request_param_t rparam = {
 	    .op_attr_mask =
@@ -271,18 +276,20 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	} else {
 		log_debug("fs_rpc_inode_create_recv() create path=%s", path);
 		int ret;
-		ret = fs_inode_create(path, mode, chunk_size, alloc_ino(ctx));
+		uint32_t i_ino = alloc_ino(ctx);
+		ret = fs_inode_create(path, mode, chunk_size, i_ino);
 		if (ret) {
 			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
 		} else {
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+			*(uint32_t *)(user_data->iov[1].buffer) = i_ino;
 		}
 	}
 	free(pardir);
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
 	    param->reply_ep, RPC_INODE_CREATE_REP, user_data->header,
-	    sizeof(void *), user_data->iov, user_data->n, &rparam);
+	    header_length, user_data->iov, user_data->n, &rparam);
 	if (req == NULL) {
 		free(user_data->header);
 		free(user_data->iov[0].buffer);
