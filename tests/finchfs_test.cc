@@ -46,6 +46,32 @@ TEST(FinchfsTest, Open2)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Open3)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd1, fd2;
+	fd1 = finchfs_open("/bar", 0);
+	EXPECT_EQ(fd1, 0);
+	fd2 = finchfs_open("/baz", 0);
+	EXPECT_EQ(fd2, 1);
+	finchfs_close(fd1);
+	finchfs_close(fd2);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Open4)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd1, fd2;
+	fd1 = finchfs_open("/bar", 0);
+	EXPECT_EQ(fd1, 0);
+	finchfs_close(fd1);
+	fd2 = finchfs_open("/baz", 0);
+	EXPECT_EQ(fd2, 0);
+	finchfs_close(fd2);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 TEST(FinchfsTest, Mkdir)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);

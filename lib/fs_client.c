@@ -349,7 +349,8 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 }
 
 int
-fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size)
+fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
+		    uint32_t *i_ino)
 {
 	int target = path_to_target_hash(path, env.nprocs);
 	int path_len = strlen(path) + 1;
@@ -406,6 +407,7 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size)
 		return (-1);
 	}
 	log_debug("fs_rpc_inode_create: succeeded ino=%d", handle.ino);
+	*i_ino = handle.ino;
 	return (0);
 }
 
