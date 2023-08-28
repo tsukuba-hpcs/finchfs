@@ -19,6 +19,7 @@ typedef struct {
 	int rank;
 	int nprocs;
 	int shutdown;
+	char *db_dir;
 } finchfsd_ctx_t;
 
 static sigset_t sigset;
@@ -89,6 +90,7 @@ main(int argc, char **argv)
 {
 	finchfsd_ctx_t ctx = {
 	    .shutdown = 0,
+	    .db_dir = "/tmp",
 	};
 	ucs_status_t status;
 	pthread_t handler_thread;
@@ -127,7 +129,7 @@ main(int argc, char **argv)
 		return (-1);
 	}
 
-	if (fs_server_init(ctx.ucp_worker)) {
+	if (fs_server_init(ctx.ucp_worker, ctx.db_dir, ctx.rank, ctx.nprocs)) {
 		log_fatal("fs_server_init() failed: %s",
 			  ucs_status_string(status));
 		return (-1);

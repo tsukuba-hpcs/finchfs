@@ -6,11 +6,11 @@ extern "C" {
 #include <finchfs.h>
 }
 
-TEST(FinchfsTest, OpenClose)
+TEST(FinchfsTest, Create)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_open("/hello_world", 0);
+	fd = finchfs_create("/bar", 0, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_term(), 0);
@@ -19,14 +19,14 @@ TEST(FinchfsTest, OpenClose)
 TEST(FinchfsTest, Mkdir)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
-	EXPECT_EQ(finchfs_mkdir("/foo", 0), 0);
+	EXPECT_EQ(finchfs_mkdir("/foo", S_IRWXU), 0);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
 TEST(FinchfsTest, Mkdir2)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
-	EXPECT_EQ(finchfs_mkdir("/foo", 0), -1);
+	EXPECT_EQ(finchfs_mkdir("/foo", S_IRWXU), -1);
 	EXPECT_EQ(errno, EEXIST);
 	EXPECT_EQ(finchfs_term(), 0);
 }
@@ -34,7 +34,7 @@ TEST(FinchfsTest, Mkdir2)
 TEST(FinchfsTest, Mkdir3)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
-	EXPECT_EQ(finchfs_mkdir("/foo/bar/baz", 0), -1);
+	EXPECT_EQ(finchfs_mkdir("/foo/bar/baz", S_IRWXU), -1);
 	EXPECT_EQ(errno, ENOENT);
 	EXPECT_EQ(finchfs_term(), 0);
 }

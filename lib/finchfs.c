@@ -1,10 +1,16 @@
 #include <stdint.h>
 #include <ucp/api/ucp.h>
 #include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <stdlib.h>
 #include "finchfs.h"
 #include "fs_rpc.h"
 #include "path.h"
 #include "log.h"
+
+static size_t finchfs_chunk_size = 65536;
 
 int
 finchfs_init(const char *addrfile)
@@ -18,7 +24,28 @@ finchfs_init(const char *addrfile)
 int
 finchfs_term()
 {
-	return 0;
+	return fs_client_term();
+}
+
+int
+finchfs_create(const char *path, int32_t flags, mode_t mode)
+{
+	return finchfs_create_chunk_size(path, flags, mode, finchfs_chunk_size);
+}
+
+int
+finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
+			  size_t chunk_size)
+{
+	char *p = canonical_path(path);
+	int ret;
+	mode |= S_IFREG;
+	ret = fs_rpc_inode_create(p, mode, chunk_size);
+	free(p);
+	if (ret) {
+		return (-1);
+	}
+	return (0);
 }
 
 int
@@ -36,11 +63,12 @@ finchfs_close(int fd)
 int
 finchfs_mkdir(const char *path, mode_t mode)
 {
+	int ret;
 	char *p = canonical_path(path);
-	if (p == NULL) {
-		return (-1);
-	}
-	return fs_rpc_mkdir(p, mode);
+	mode |= S_IFDIR;
+	ret = fs_rpc_mkdir(p, mode);
+	free(p);
+	return (ret);
 }
 
 int
