@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include "finchfs.h"
+#include "fs_types.h"
 #include "fs_rpc.h"
 #include "path.h"
 #include "log.h"
@@ -51,7 +52,16 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 int
 finchfs_open(const char *path, int32_t flags)
 {
-	return 0;
+	char *p = canonical_path(path);
+	int ret;
+	fs_stat_t st;
+	ret = fs_rpc_inode_stat(p, &st);
+	free(p);
+	if (ret) {
+		return (-1);
+	}
+	log_debug("finchfs_open() called path=%s inode=%d", path, st.i_ino);
+	return (0);
 }
 
 int

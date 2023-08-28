@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include "config.h"
+#include "fs_types.h"
 #include "fs_rpc.h"
 #include "log.h"
 

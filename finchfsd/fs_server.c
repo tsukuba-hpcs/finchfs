@@ -27,6 +27,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include "fs_types.h"
 #include "fs_rpc.h"
 #include "hashmap.h"
 #include "fs.h"
@@ -86,28 +87,16 @@ direntry_hash(const void *item, uint64_t seed0, uint64_t seed1)
 }
 
 static void
-fs_rpc_mkdir_recv_reply_cb(void *request, ucs_status_t status, void *user_data)
+fs_rpc_reply_cb(void *request, ucs_status_t status, void *user_data)
 {
-	log_debug("fs_rpc_mkdir_recv_reply_cb() called status=%s",
+	log_debug("fs_rpc_reply_cb() called status=%s",
 		  ucs_status_string(status));
 	ucp_request_free(request);
 	iov_req_t *iov_req = user_data;
 	free(iov_req->header);
-	free(iov_req->iov[0].buffer);
-	free(iov_req);
-}
-
-static void
-fs_rpc_inode_create_recv_reply_cb(void *request, ucs_status_t status,
-				  void *user_data)
-{
-	log_debug("fs_rpc_inode_create_recv_reply_cb() called status=%s",
-		  ucs_status_string(status));
-	ucp_request_free(request);
-	iov_req_t *iov_req = user_data;
-	free(iov_req->header);
-	free(iov_req->iov[0].buffer);
-	free(iov_req->iov[1].buffer);
+	for (int i = 0; i < iov_req->n; i++) {
+		free(iov_req->iov[i].buffer);
+	}
 	free(iov_req);
 }
 
@@ -161,7 +150,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
 	    .cb =
 		{
-		    .send = fs_rpc_mkdir_recv_reply_cb,
+		    .send = fs_rpc_reply_cb,
 		},
 	    .flags = UCP_AM_SEND_FLAG_EAGER,
 	    .datatype = UCP_DATATYPE_IOV,
@@ -204,13 +193,17 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	    user_data->iov, user_data->n, &rparam);
 	if (req == NULL) {
 		free(user_data->header);
-		free(user_data->iov[0].buffer);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
 		free(user_data);
 	} else if (UCS_PTR_IS_ERR(req)) {
 		log_error("ucp_am_send_nbx() failed: %s",
 			  ucs_status_string(UCS_PTR_STATUS(req)));
 		free(user_data->header);
-		free(user_data->iov[0].buffer);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
 		free(user_data);
 		ucs_status_t status = UCS_PTR_STATUS(req);
 		ucp_request_free(req);
@@ -257,7 +250,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
 	    .cb =
 		{
-		    .send = fs_rpc_inode_create_recv_reply_cb,
+		    .send = fs_rpc_reply_cb,
 		},
 	    .flags = UCP_AM_SEND_FLAG_EAGER,
 	    .datatype = UCP_DATATYPE_IOV,
@@ -292,13 +285,90 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	    header_length, user_data->iov, user_data->n, &rparam);
 	if (req == NULL) {
 		free(user_data->header);
-		free(user_data->iov[0].buffer);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
 		free(user_data);
 	} else if (UCS_PTR_IS_ERR(req)) {
 		log_error("ucp_am_send_nbx() failed: %s",
 			  ucs_status_string(UCS_PTR_STATUS(req)));
 		free(user_data->header);
-		free(user_data->iov[0].buffer);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+		ucs_status_t status = UCS_PTR_STATUS(req);
+		ucp_request_free(req);
+		return (status);
+	}
+	return (UCS_OK);
+}
+
+ucs_status_t
+fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
+		       void *data, size_t length,
+		       const ucp_am_recv_param_t *param)
+{
+	struct worker_ctx *ctx = (struct worker_ctx *)arg;
+	int path_len;
+	char *path;
+	size_t offset = 0;
+	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(path_len);
+	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+
+	log_debug("fs_rpc_inode_stat_recv() called path=%s header_length=%d",
+		  path, header_length);
+
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	user_data->n = 2;
+	user_data->iov[0].buffer = malloc(sizeof(int));
+	user_data->iov[0].length = sizeof(int);
+	user_data->iov[1].buffer = malloc(sizeof(fs_stat_t));
+	user_data->iov[1].length = sizeof(fs_stat_t);
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
+		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
+	    .cb =
+		{
+		    .send = fs_rpc_reply_cb,
+		},
+	    .flags = UCP_AM_SEND_FLAG_EAGER,
+	    .datatype = UCP_DATATYPE_IOV,
+	    .user_data = user_data,
+	};
+
+	int ret;
+	fs_stat_t *st = (fs_stat_t *)user_data->iov[1].buffer;
+	ret = fs_inode_stat(path, st);
+	if (ret) {
+		*(int *)(user_data->iov[0].buffer) = -errno;
+	} else {
+		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+	}
+
+	ucs_status_ptr_t req = ucp_am_send_nbx(
+	    param->reply_ep, RPC_INODE_STAT_REP, user_data->header,
+	    header_length, user_data->iov, user_data->n, &rparam);
+
+	if (req == NULL) {
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+	} else if (UCS_PTR_IS_ERR(req)) {
+		log_error("ucp_am_send_nbx() failed: %s",
+			  ucs_status_string(UCS_PTR_STATUS(req)));
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
 		free(user_data);
 		ucs_status_t status = UCS_PTR_STATUS(req);
 		ucp_request_free(req);
@@ -352,6 +422,20 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs)
 	if ((status = ucp_worker_set_am_recv_handler(
 		 worker, &inode_create_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(create) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t inode_stat_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_INODE_STAT_REQ,
+	    .cb = fs_rpc_inode_stat_recv,
+	    .arg = &all_ctx,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 worker, &inode_stat_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(stat) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}

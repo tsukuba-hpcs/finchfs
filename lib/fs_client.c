@@ -8,6 +8,7 @@
 #include "finchfs.h"
 #include "config.h"
 #include "log.h"
+#include "fs_types.h"
 #include "fs_rpc.h"
 
 static struct env {
@@ -41,6 +42,24 @@ fs_rpc_inode_create_reply(void *arg, const void *header, size_t header_length,
 	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(int);
 	handle->ino = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	return (UCS_OK);
+}
+
+typedef struct {
+	int ret;
+	fs_stat_t st;
+} inode_stat_handle_t;
+
+ucs_status_t
+fs_rpc_inode_stat_reply(void *arg, const void *header, size_t header_length,
+			void *data, size_t length,
+			const ucp_am_recv_param_t *param)
+{
+	inode_stat_handle_t *handle = *(inode_stat_handle_t **)header;
+	size_t offset = 0;
+	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(int);
+	handle->st = *(fs_stat_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 	return (UCS_OK);
 }
 
@@ -156,6 +175,21 @@ fs_client_init(char *addrfile)
 		 env.ucp_worker, &inode_create_reply_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(inode create) failed: %s",
+		    ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t inode_stat_reply_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_INODE_STAT_REP,
+	    .cb = fs_rpc_inode_stat_reply,
+	    .arg = NULL,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 env.ucp_worker, &inode_stat_reply_param)) != UCS_OK) {
+		log_error(
+		    "ucp_worker_set_am_recv_handler(inode stat) failed: %s",
 		    ucs_status_string(status));
 		return (-1);
 	}
@@ -372,5 +406,63 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size)
 		return (-1);
 	}
 	log_debug("fs_rpc_inode_create: succeeded ino=%d", handle.ino);
+	return (0);
+}
+
+int
+fs_rpc_inode_stat(const char *path, fs_stat_t *st)
+{
+	int target = path_to_target_hash(path, env.nprocs);
+	int path_len = strlen(path) + 1;
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = &path_len;
+	iov[0].length = sizeof(path_len);
+	iov[1].buffer = (void *)path;
+	iov[1].length = path_len;
+
+	inode_stat_handle_t handle;
+	handle.ret = FINCH_INPROGRESS;
+
+	void *handle_addr = &handle;
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t req;
+	req =
+	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_STAT_REQ,
+			    &handle_addr, sizeof(handle_addr), iov, 2, &rparam);
+	ucs_status_t status;
+	while (!all_req_finish(&req, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (req != NULL) {
+		status = ucp_request_check_status(req);
+		if (status != UCS_OK) {
+			log_error(
+			    "fs_rpc_inode_create: ucp_am_send_nbx() failed: %s",
+			    ucs_status_string(status));
+			return (-1);
+		}
+		ucp_request_free(req);
+	}
+
+	log_debug("fs_rpc_inode_stat: ucp_am_send_nbx() succeeded");
+	while (!all_ret_finish(&handle.ret, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (handle.ret != FINCH_OK) {
+		log_error("fs_rpc_inode_stat: stat() failed: %s",
+			  strerror(-handle.ret));
+		errno = -handle.ret;
+		return (-1);
+	}
+	*st = handle.st;
+	log_debug("fs_rpc_inode_stat: succeeded ino=%zu chunksize=%zu size=%zu",
+		  st->i_ino, st->chunk_size, st->size);
 	return (0);
 }

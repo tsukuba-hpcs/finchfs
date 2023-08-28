@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include "log.h"
+#include "fs_types.h"
 #include "fs.h"
 
 void
@@ -70,5 +71,47 @@ fs_inode_create(char *path, mode_t mode, size_t chunk_size, uint32_t i_ino)
 		log_error("unknown mode %o", mode);
 		return (-1);
 	}
+	return (0);
+}
+
+int
+fs_inode_stat(char *path, fs_stat_t *st)
+{
+	log_debug("fs_inode_stat() called path=%s", path);
+	struct stat sb;
+	int ret;
+	ret = lstat(path, &sb);
+	if (ret == -1) {
+		log_error("fs_inode_stat stat() failed: %s", strerror(errno));
+		return (-1);
+	}
+	int fd;
+	fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		log_error("fs_inode_stat open() failed: %s", strerror(errno));
+		return (-1);
+	}
+	ret = read(fd, &st->size, sizeof(st->size));
+	if (ret != sizeof(st->size)) {
+		log_error("fs_inode_stat read() failed: %s", strerror(errno));
+		close(fd);
+		return (-1);
+	}
+	ret = read(fd, &st->chunk_size, sizeof(st->chunk_size));
+	if (ret != sizeof(st->chunk_size)) {
+		log_error("fs_inode_stat read() failed: %s", strerror(errno));
+		close(fd);
+		return (-1);
+	}
+	ret = read(fd, &st->i_ino, sizeof(st->i_ino));
+	if (ret != sizeof(st->i_ino)) {
+		log_error("fs_inode_stat read() failed: %s", strerror(errno));
+		close(fd);
+		return (-1);
+	}
+	close(fd);
+	st->mode = sb.st_mode;
+	st->mtime = sb.st_mtim;
+	st->ctime = sb.st_ctim;
 	return (0);
 }
