@@ -96,12 +96,6 @@ fs_inode_stat(char *path, fs_stat_t *st)
 		log_error("fs_inode_stat open() failed: %s", strerror(errno));
 		return (-1);
 	}
-	ret = read(fd, &st->size, sizeof(st->size));
-	if (ret != sizeof(st->size)) {
-		log_error("fs_inode_stat read() failed: %s", strerror(errno));
-		close(fd);
-		return (-1);
-	}
 	ret = read(fd, &st->chunk_size, sizeof(st->chunk_size));
 	if (ret != sizeof(st->chunk_size)) {
 		log_error("fs_inode_stat read() failed: %s", strerror(errno));

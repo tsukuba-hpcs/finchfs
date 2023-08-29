@@ -1,5 +1,4 @@
 typedef struct {
-	size_t size;
 	size_t chunk_size;
 	uint32_t i_ino;
 	uint32_t mode;

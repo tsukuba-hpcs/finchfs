@@ -502,8 +502,8 @@ fs_rpc_inode_stat(const char *path, fs_stat_t *st)
 		return (-1);
 	}
 	*st = handle.st;
-	log_debug("fs_rpc_inode_stat: succeeded ino=%zu chunksize=%zu size=%zu",
-		  st->i_ino, st->chunk_size, st->size);
+	log_debug("fs_rpc_inode_stat: succeeded ino=%zu chunksize=%zu",
+		  st->i_ino, st->chunk_size);
 	return (0);
 }
 
