@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include "log.h"
 #include "fs_types.h"
 #include "fs.h"
@@ -22,6 +23,10 @@ fs_inode_init(char *db_dir)
 	}
 	if (ret == -1) {
 		log_fatal("%s: %s", db_dir, strerror(errno));
+	}
+	ret = mkdir(".finch_data", 0755);
+	if (ret == -1 && errno != EEXIST) {
+		log_fatal("%s/.finch_data: %s", db_dir, strerror(errno));
 	}
 	log_debug("fs_inode_init() called db_dir=%s", db_dir);
 }
@@ -113,5 +118,33 @@ fs_inode_stat(char *path, fs_stat_t *st)
 	st->mode = sb.st_mode;
 	st->mtime = sb.st_mtim;
 	st->ctime = sb.st_ctim;
+	return (0);
+}
+
+int
+fs_inode_write(uint32_t i_ino, uint32_t index, off_t offset, size_t size,
+	       const void *buf, ssize_t *ss)
+{
+	log_debug("fs_inode_write() called i_ino=%u index=%u offset=%ld "
+		  "size=%zu",
+		  i_ino, index, offset, size);
+	char buffer[128];
+	snprintf(buffer, sizeof(buffer), ".finch_data/%u.%u", i_ino, index);
+	int fd;
+	fd = open(buffer, O_WRONLY | O_CREAT, 0644);
+	if (fd < 0) {
+		log_error("fs_inode_write open() failed: %s", strerror(errno));
+		return (-1);
+	}
+	int ret;
+	ret = pwrite(fd, buf, size, offset);
+	if (ret != size) {
+		log_error("fs_inode_write pwrite() failed: %s",
+			  strerror(errno));
+		close(fd);
+		return (-1);
+	}
+	close(fd);
+	*ss = (ssize_t)size;
 	return (0);
 }

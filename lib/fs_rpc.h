@@ -4,11 +4,16 @@
 #define RPC_INODE_CREATE_REP 0x04
 #define RPC_INODE_STAT_REQ 0x05
 #define RPC_INODE_STAT_REP 0x06
+#define RPC_INODE_WRITE_REQ 0x07
+#define RPC_INODE_WRITE_REP 0x08
 
 int fs_rpc_mkdir(const char *path, mode_t mode);
 int fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 			uint32_t *i_ino);
 int fs_rpc_inode_stat(const char *path, fs_stat_t *st);
+void *fs_async_rpc_inode_write(uint32_t i_ino, uint32_t index, off_t offset,
+			       size_t size, const void *buf);
+ssize_t fs_async_rpc_inode_write_wait(void **hdles, int nreqs);
 
 int fs_client_init(char *addrfile);
 int fs_client_term(void);
@@ -21,3 +26,10 @@ typedef struct {
 	int n;
 	ucp_dt_iov_t iov[];
 } iov_req_t;
+
+typedef struct {
+	void *header;
+	void *buf;
+	size_t length;
+	ucp_ep_h reply_ep;
+} req_rndv_t;

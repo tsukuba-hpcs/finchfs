@@ -5,5 +5,7 @@ int finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 			      size_t chunk_size);
 int finchfs_open(const char *path, int32_t flags);
 int finchfs_close(int fd);
+ssize_t finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset);
+ssize_t finchfs_write(int fd, const void *buf, size_t size);
 int finchfs_mkdir(const char *path, mode_t mode);
 int finchfs_rmdir(const char *path);
