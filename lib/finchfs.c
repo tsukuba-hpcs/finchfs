@@ -111,7 +111,8 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].i_ino = st.i_ino;
 	fd_table[fd].mode = st.mode;
 	fd_table[fd].chunk_size = st.chunk_size;
-	log_debug("finchfs_open() called path=%s inode=%d", path, st.i_ino);
+	log_debug("finchfs_open() called path=%s inode=%d chunk_size=%zu", path,
+		  st.i_ino, st.chunk_size);
 	return (fd);
 }
 
@@ -174,7 +175,7 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 			ret = -1;
 		}
 		local_pos = 0;
-		buf_p += chunk_size;
+		buf_p += local_size;
 	}
 	if (ret < 0) {
 		int nreq = 0;
@@ -202,6 +203,85 @@ finchfs_write(int fd, const void *buf, size_t size)
 		return (-1);
 	}
 	ret = finchfs_pwrite(fd, buf, size, fd_table[fd].pos);
+	if (ret >= 0) {
+		fd_table[fd].pos += ret;
+	}
+	return (ret);
+}
+
+ssize_t
+finchfs_pread(int fd, void *buf, size_t size, off_t offset)
+{
+	ssize_t ret;
+	uint32_t index;
+	off_t local_pos;
+	size_t chunk_size;
+	size_t tot;
+	int nchunks;
+	void **hdles;
+	void *buf_p;
+	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	if (offset < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (size == 0) {
+		return (0);
+	}
+	chunk_size = fd_table[fd].chunk_size;
+	index = offset / chunk_size;
+	local_pos = offset % chunk_size;
+	nchunks = (local_pos + size + chunk_size - 1) / chunk_size;
+	hdles = malloc(sizeof(void *) * nchunks);
+	ret = 0;
+	tot = 0;
+	buf_p = (void *)buf;
+	for (int i = 0; i < nchunks; ++i) {
+		size_t local_size = chunk_size - local_pos;
+		if (local_size > size - tot) {
+			local_size = size - tot;
+		}
+		tot += local_size;
+		hdles[i] =
+		    fs_async_rpc_inode_read(fd_table[fd].i_ino, index + i,
+					    local_pos, local_size, buf_p);
+		if (hdles[i] == NULL) {
+			log_debug("fs_async_rpc_inode_read failed at=%d", i);
+			errno = EIO;
+			ret = -1;
+		}
+		local_pos = 0;
+		buf_p += local_size;
+	}
+	if (ret < 0) {
+		int nreq = 0;
+		for (int i = 0; i < nchunks; ++i) {
+			if (hdles[i]) {
+				hdles[nreq++] = hdles[i];
+			}
+		}
+		fs_async_rpc_inode_write_wait(hdles, nreq);
+		free(hdles);
+		return (ret);
+	}
+	ret = fs_async_rpc_inode_read_wait(hdles, nchunks);
+	log_debug("fs_async_rpc_inode_read_wait succeeded ret=%d", ret);
+	free(hdles);
+	return (ret);
+}
+
+ssize_t
+finchfs_read(int fd, void *buf, size_t size)
+{
+	ssize_t ret;
+	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	ret = finchfs_pread(fd, buf, size, fd_table[fd].pos);
 	if (ret >= 0) {
 		fd_table[fd].pos += ret;
 	}

@@ -145,6 +145,83 @@ TEST(FinchfsTest, Write5)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+static void
+rnd_fill(char *buf, size_t size)
+{
+	for (size_t i = 0; i < size; i++) {
+		buf[i] = rand() % 256;
+	}
+}
+
+TEST(FinchfsTest, Read)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/read1", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	char buf[1024], buf2[1024];
+	rnd_fill(buf, sizeof(buf));
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	finchfs_close(fd);
+	fd = finchfs_open("/read1", 0);
+	EXPECT_EQ(fd, 0);
+	n = finchfs_read(fd, buf2, sizeof(buf2));
+	EXPECT_EQ(n, sizeof(buf2));
+	EXPECT_TRUE(memcmp(buf, buf2, sizeof(buf2)) == 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Read2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create_chunk_size("/read1", 0, S_IRWXU, (1 << 24));
+	EXPECT_EQ(fd, 0);
+	char *buf;
+	char *buf2;
+	buf = (char *)malloc((1 << 24));
+	buf2 = (char *)malloc((1 << 24));
+	rnd_fill(buf, 1 << 24);
+	ssize_t n;
+	n = finchfs_write(fd, buf, (1 << 24));
+	EXPECT_EQ(n, 1 << 24);
+	finchfs_close(fd);
+	fd = finchfs_open("/read1", 0);
+	EXPECT_EQ(fd, 0);
+	n = finchfs_read(fd, buf2, (1 << 24));
+	EXPECT_EQ(n, (1 << 24));
+	EXPECT_TRUE(memcmp(buf, buf2, (1 << 24)) == 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Read3)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create_chunk_size("/read3", 0, S_IRWXU, 128);
+	EXPECT_EQ(fd, 0);
+	char buf[1024];
+	char buf2[1024];
+	rnd_fill(buf, sizeof(buf));
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	finchfs_close(fd);
+	fd = finchfs_open("/read3", 0);
+	EXPECT_EQ(fd, 0);
+	for (int i = 0; i < 8; i++) {
+		n = finchfs_read(fd, buf2, 100);
+		EXPECT_EQ(n, 100);
+		EXPECT_TRUE(memcmp(buf + i * 100, buf2, 100) == 0);
+	}
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 TEST(FinchfsTest, Mkdir)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);

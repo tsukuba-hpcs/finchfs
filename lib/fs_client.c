@@ -67,7 +67,6 @@ typedef struct {
 	int ret;
 	ssize_t ss;
 	ucs_status_ptr_t req;
-	void *buf;
 	inode_write_header_t header;
 } inode_write_handle_t;
 
@@ -81,6 +80,90 @@ fs_rpc_inode_write_reply(void *arg, const void *header, size_t header_length,
 	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(int);
 	handle->ss = *(ssize_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	return (UCS_OK);
+}
+
+typedef struct {
+	int ret;
+	ssize_t ss;
+	ucs_status_ptr_t req;
+	inode_read_header_t header;
+	void *buf;
+} inode_read_handle_t;
+
+static void
+fs_rpc_inode_read_reply_rndv(void *request, ucs_status_t status, size_t length,
+			     void *user_data)
+{
+	log_debug("fs_rpc_inode_read_reply_rndv: called header=%p", user_data);
+	inode_read_header_t *header = (inode_read_header_t *)user_data;
+	inode_read_handle_t *handle = header->handle;
+	ucp_request_free(request);
+	handle->ret = header->ret;
+	if (header->ret == FINCH_OK) {
+		handle->ss = header->size;
+	} else {
+		handle->ss = -1;
+	}
+	free(header);
+}
+
+ucs_status_t
+fs_rpc_inode_read_reply(void *arg, const void *header, size_t header_length,
+			void *data, size_t length,
+			const ucp_am_recv_param_t *param)
+{
+	inode_read_header_t *hdr = (inode_read_header_t *)header;
+	inode_read_handle_t *handle = hdr->handle;
+	log_debug("fs_rpc_inode_read_reply: handle=%p", handle);
+
+	if (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) {
+		inode_read_header_t *user_data =
+		    malloc(sizeof(inode_read_header_t));
+		log_debug("fs_rpc_inode_read_reply: rndv");
+		memcpy(user_data, header, header_length);
+		ucp_request_param_t rparam = {
+		    .op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE |
+				    UCP_OP_ATTR_FIELD_CALLBACK |
+				    UCP_OP_ATTR_FIELD_USER_DATA,
+		    .cb =
+			{
+			    .recv_am = fs_rpc_inode_read_reply_rndv,
+			},
+		    .datatype = ucp_dt_make_contig(sizeof(char)),
+		    .user_data = user_data,
+		};
+		ucs_status_ptr_t req =
+		    ucp_am_recv_data_nbx(env.ucp_worker, data, handle->buf,
+					 user_data->size, &rparam);
+		if (req == NULL) {
+			handle->ret = hdr->ret;
+			if (hdr->ret == FINCH_OK) {
+				handle->ss = hdr->size;
+			} else {
+				handle->ss = -1;
+			}
+			free(user_data);
+		} else if (UCS_PTR_IS_ERR(req)) {
+			log_error("ucp_am_recv_data_nbx() failed: %s",
+				  ucs_status_string(UCS_PTR_STATUS(req)));
+			handle->ret = FINCH_EIO;
+			handle->ss = -1;
+			free(user_data);
+			ucs_status_t status = UCS_PTR_STATUS(req);
+			ucp_request_free(req);
+			return (status);
+		}
+	} else {
+		log_debug("fs_rpc_inode_read_reply: eager");
+		handle->ret = hdr->ret;
+		if (hdr->ret == FINCH_OK) {
+			handle->ss = hdr->size;
+			memcpy(handle->buf, data, hdr->size);
+		} else {
+			handle->ss = -1;
+		}
+	}
 	return (UCS_OK);
 }
 
@@ -226,6 +309,21 @@ fs_client_init(char *addrfile)
 		 env.ucp_worker, &inode_write_reply_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(inode write) failed: %s",
+		    ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t inode_read_reply_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_INODE_READ_REP,
+	    .cb = fs_rpc_inode_read_reply,
+	    .arg = NULL,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 env.ucp_worker, &inode_read_reply_param)) != UCS_OK) {
+		log_error(
+		    "ucp_worker_set_am_recv_handler(inode read) failed: %s",
 		    ucs_status_string(status));
 		return (-1);
 	}
@@ -520,7 +618,6 @@ fs_async_rpc_inode_write(uint32_t i_ino, uint32_t index, off_t offset,
 	inode_write_handle_t *handle = malloc(sizeof(inode_write_handle_t));
 	handle->ret = FINCH_INPROGRESS;
 	handle->ss = -1;
-	handle->buf = (void *)buf;
 	handle->header = (inode_write_header_t){
 	    .handle = handle,
 	    .i_ino = i_ino,
@@ -537,7 +634,7 @@ fs_async_rpc_inode_write(uint32_t i_ino, uint32_t index, off_t offset,
 
 	handle->req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_WRITE_REQ,
 				      &handle->header, sizeof(handle->header),
-				      handle->buf, size, &rparam);
+				      buf, size, &rparam);
 	if (handle->req && UCS_PTR_IS_ERR(handle->req)) {
 		log_error("fs_rpc_inode_write: ucp_am_send_nbx() failed: %s",
 			  ucs_status_string(UCS_PTR_STATUS(handle->req)));
@@ -606,6 +703,124 @@ fs_async_rpc_inode_write_wait(void **hdles, int nreqs)
 		if (handles[i]->ret != FINCH_OK) {
 			log_error("fs_async_rpc_inode_write_wait: "
 				  "write() failed at %d: %s",
+				  i, strerror(-handles[i]->ret));
+			errno = -handles[i]->ret;
+			ss = -1;
+			break;
+		}
+		ss += handles[i]->ss;
+	}
+	for (int i = 0; i < nreqs; i++) {
+		free(handles[i]);
+	}
+	return (ss);
+}
+
+void *
+fs_async_rpc_inode_read(uint32_t i_ino, uint32_t index, off_t offset,
+			size_t size, void *buf)
+{
+	if (size == 0) {
+		log_error("fs_async_rpc_inode_read: size is 0");
+		return (NULL);
+	}
+
+	int target = (i_ino + index) % env.nprocs;
+	inode_read_handle_t *handle = malloc(sizeof(inode_read_handle_t));
+	log_debug("fs_async_rpc_inode_read: handle=%p", handle);
+	handle->ret = FINCH_INPROGRESS;
+	handle->ss = -1;
+	handle->buf = buf;
+	handle->header = (inode_read_header_t){
+	    .handle = handle,
+	    .i_ino = i_ino,
+	    .index = index,
+	    .offset = offset,
+	    .size = size,
+	    .ret = FINCH_INPROGRESS,
+	};
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = ucp_dt_make_contig(sizeof(char)),
+	};
+
+	handle->req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_READ_REQ,
+				      &handle->header, sizeof(handle->header),
+				      buf, 1, &rparam);
+	if (handle->req && UCS_PTR_IS_ERR(handle->req)) {
+		log_error("fs_rpc_inode_read: ucp_am_send_nbx() failed: %s",
+			  ucs_status_string(UCS_PTR_STATUS(handle->req)));
+		free(handle);
+		return (NULL);
+	}
+	return (handle);
+}
+
+ssize_t
+fs_async_rpc_inode_read_wait(void **hdles, int nreqs)
+{
+	inode_read_handle_t **handles = (inode_read_handle_t **)hdles;
+	ucs_status_t status;
+	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * nreqs);
+	for (int i = 0; i < nreqs; i++) {
+		reqs[i] = handles[i]->req;
+	}
+	while (!all_req_finish(reqs, nreqs)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	int nokreq = 0;
+	int *okidx = malloc(sizeof(int) * nreqs);
+	for (int i = 0; i < nreqs; i++) {
+		if (reqs[i] == NULL) {
+			okidx[nokreq++] = i;
+			continue;
+		}
+		status = ucp_request_check_status(reqs[i]);
+		if (status != UCS_OK) {
+			log_error("fs_async_rpc_inode_read_wait: "
+				  "ucp_am_send_nbx() failed at %d: %s",
+				  i, ucs_status_string(status));
+		} else {
+			okidx[nokreq++] = i;
+		}
+		ucp_request_free(reqs[i]);
+	}
+	if (nokreq < nreqs) {
+		log_error(
+		    "fs_async_rpc_inode_read_wait: ucp_am_send_nbx() failed");
+	}
+	log_debug("fs_async_rpc_inode_read_wait: ucp_am_send_nbx() "
+		  "succeeded");
+	free(reqs);
+	int **rets = malloc(sizeof(int *) * nokreq);
+	for (int i = 0; i < nokreq; i++) {
+		rets[i] = &handles[okidx[i]]->ret;
+	}
+	while (!all_ret_finish(rets, nokreq)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	free(okidx);
+	free(rets);
+	if (nokreq < nreqs) {
+		for (int i = 0; i < nreqs; i++) {
+			free(handles[i]);
+		}
+		log_error("fs_async_rpc_inode_read_wait failed"
+			  "nokreq=%d nreqs=%d",
+			  nokreq, nreqs);
+		return (-1);
+	}
+	ssize_t ss = 0;
+	for (int i = 0; i < nreqs; i++) {
+		if (handles[i]->ret == FINCH_ENOENT) {
+			log_debug("fs_async_rpc_inode_read_wait: ENOENT");
+			break;
+		} else if (handles[i]->ret != FINCH_OK) {
+			log_error("fs_async_rpc_inode_read_wait: "
+				  "read() failed at %d: %s",
 				  i, strerror(-handles[i]->ret));
 			errno = -handles[i]->ret;
 			ss = -1;

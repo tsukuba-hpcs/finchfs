@@ -12,6 +12,15 @@ typedef struct {
 	off_t offset;
 } inode_write_header_t;
 
+typedef struct {
+	void *handle;
+	uint32_t i_ino;
+	uint32_t index;
+	off_t offset;
+	ssize_t size;
+	int ret;
+} inode_read_header_t;
+
 typedef enum {
 	FINCH_OK = 0,
 	FINCH_INPROGRESS = 1,
