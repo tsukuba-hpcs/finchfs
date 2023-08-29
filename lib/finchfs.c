@@ -218,9 +218,3 @@ finchfs_mkdir(const char *path, mode_t mode)
 	free(p);
 	return (ret);
 }
-
-int
-finchfs_rmdir(const char *path)
-{
-	return 0;
-}
