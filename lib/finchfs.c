@@ -62,6 +62,7 @@ finchfs_term()
 int
 finchfs_create(const char *path, int32_t flags, mode_t mode)
 {
+	log_debug("finchfs_create_chunk_size() called path=%s", path);
 	return finchfs_create_chunk_size(path, flags, mode, finchfs_chunk_size);
 }
 
@@ -69,6 +70,8 @@ int
 finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 			  size_t chunk_size)
 {
+	log_debug("finchfs_create_chunk_size() called path=%s chunk_size=%zu",
+		  path, chunk_size);
 	char *p = canonical_path(path);
 	int ret;
 	int fd;
@@ -100,6 +103,7 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 int
 finchfs_open(const char *path, int32_t flags)
 {
+	log_debug("finchfs_open() called path=%s", path);
 	char *p = canonical_path(path);
 	int ret;
 	int fd;
@@ -138,6 +142,7 @@ finchfs_open(const char *path, int32_t flags)
 int
 finchfs_close(int fd)
 {
+	log_debug("finchfs_close() called fd=%d", fd);
 	if (fd < 0 || fd >= fd_table_size) {
 		errno = EBADF;
 		return (-1);
@@ -152,6 +157,8 @@ finchfs_close(int fd)
 ssize_t
 finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 {
+	log_debug("finchfs_pwrite() called fd=%d size=%zu offset=%d", fd, size,
+		  offset);
 	ssize_t ret;
 	uint32_t index;
 	off_t local_pos;
@@ -216,6 +223,7 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 ssize_t
 finchfs_write(int fd, const void *buf, size_t size)
 {
+	log_debug("finchfs_write() called fd=%d size=%zu", fd, size);
 	ssize_t ret;
 	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
@@ -231,6 +239,8 @@ finchfs_write(int fd, const void *buf, size_t size)
 ssize_t
 finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 {
+	log_debug("finchfs_pread() called fd=%d size=%zu offset=%d", fd, size,
+		  offset);
 	ssize_t ret;
 	uint32_t index;
 	off_t local_pos;
@@ -295,6 +305,7 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 ssize_t
 finchfs_read(int fd, void *buf, size_t size)
 {
+	log_debug("finchfs_read() called fd=%d size=%zu", fd, size);
 	ssize_t ret;
 	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
@@ -310,6 +321,7 @@ finchfs_read(int fd, void *buf, size_t size)
 int
 finchfs_unlink(const char *path)
 {
+	log_debug("finchfs_unlink() called path=%s", path);
 	int ret;
 	uint32_t i_ino;
 	char *p = canonical_path(path);
@@ -321,6 +333,7 @@ finchfs_unlink(const char *path)
 int
 finchfs_mkdir(const char *path, mode_t mode)
 {
+	log_debug("finchfs_mkdir() called path=%s", path);
 	int ret;
 	char *p = canonical_path(path);
 	mode |= S_IFDIR;
@@ -332,6 +345,7 @@ finchfs_mkdir(const char *path, mode_t mode)
 int
 finchfs_rmdir(const char *path)
 {
+	log_debug("finchfs_rmdir() called path=%s", path);
 	int ret;
 	char *p = canonical_path(path);
 	ret = fs_rpc_inode_unlink_all(p);
@@ -345,6 +359,7 @@ finchfs_rmdir(const char *path)
 int
 finchfs_stat(const char *path, struct stat *st)
 {
+	log_debug("finchfs_stat() called path=%s", path);
 	char *p = canonical_path(path);
 	fs_stat_t fst;
 	int ret;
@@ -397,6 +412,8 @@ finchfs_stat(const char *path, struct stat *st)
 int
 finchfs_rename(const char *oldpath, const char *newpath)
 {
+	log_debug("finchfs_rename() called oldpath=%s newpath=%s", oldpath,
+		  newpath);
 	int ret;
 	char *oldp = canonical_path(oldpath);
 	char *newp = canonical_path(newpath);
