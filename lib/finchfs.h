@@ -12,4 +12,5 @@ ssize_t finchfs_read(int fd, void *buf, size_t size);
 int finchfs_unlink(const char *path);
 int finchfs_mkdir(const char *path, mode_t mode);
 int finchfs_rmdir(const char *path);
+int finchfs_stat(const char *path, struct stat *st);
 int finchfs_rename(const char *oldpath, const char *newpath);

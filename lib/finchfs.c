@@ -339,6 +339,61 @@ finchfs_rmdir(const char *path)
 	return (ret);
 }
 
+/* Number of 512B blocks */
+#define NUM_BLOCKS(size) ((size + 511) / 512)
+
+int
+finchfs_stat(const char *path, struct stat *st)
+{
+	char *p = canonical_path(path);
+	fs_stat_t fst;
+	int ret;
+	ret = fs_rpc_inode_stat(p, &fst);
+	if (ret) {
+		free(p);
+		return (-1);
+	}
+	st->st_mode = fst.mode;
+	st->st_uid = getuid();
+	st->st_gid = getgid();
+	st->st_size = 0;
+	st->st_mtim = fst.mtime;
+	st->st_ctim = fst.ctime;
+	st->st_nlink = 1;
+	st->st_ino = fst.i_ino;
+	st->st_blksize = fst.chunk_size;
+	st->st_blocks = 0;
+
+	int i = 1;
+	int j = -1;
+
+	while (1) {
+		uint32_t index = (i + j);
+		size_t size;
+		ret = fs_rpc_inode_chunk_stat(st->st_ino, index, &size);
+		if (ret && errno == ENOENT) {
+			if (i == 1) {
+				break;
+			}
+			i /= 2;
+			st->st_size += fst.chunk_size * i;
+			j += i;
+			i = 1;
+			continue;
+		} else if (ret) {
+			break;
+		}
+		if (size == 0 || size < fst.chunk_size) {
+			st->st_size += fst.chunk_size * (i - 1) + size;
+			break;
+		}
+		i *= 2;
+	}
+	st->st_blocks = NUM_BLOCKS(st->st_size);
+	free(p);
+	return (0);
+}
+
 int
 finchfs_rename(const char *oldpath, const char *newpath)
 {

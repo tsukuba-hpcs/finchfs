@@ -312,6 +312,42 @@ TEST(FinchfsTest, RenameDir)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Stat)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	char buf[128];
+	rnd_fill(buf, sizeof(buf));
+	fd = finchfs_create("/stat1", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	finchfs_close(fd);
+	struct stat st;
+	EXPECT_EQ(finchfs_stat("/stat1", &st), 0);
+	EXPECT_EQ(st.st_size, sizeof(buf));
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Stat2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	char buf[1000];
+	rnd_fill(buf, sizeof(buf));
+	fd = finchfs_create_chunk_size("/stat2", 0, S_IRWXU, 128);
+	EXPECT_EQ(fd, 0);
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	finchfs_close(fd);
+	struct stat st;
+	EXPECT_EQ(finchfs_stat("/stat2", &st), 0);
+	EXPECT_EQ(st.st_size, sizeof(buf));
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {

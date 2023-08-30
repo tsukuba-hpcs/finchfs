@@ -515,6 +515,80 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 	return (UCS_OK);
 }
 
+ucs_status_t
+fs_rpc_inode_chunk_stat_recv(void *arg, const void *header,
+			     size_t header_length, void *data, size_t length,
+			     const ucp_am_recv_param_t *param)
+{
+	struct worker_ctx *ctx = (struct worker_ctx *)arg;
+	uint32_t i_ino;
+	uint32_t index;
+	size_t offset = 0;
+	i_ino = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(i_ino);
+	index = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+
+	log_debug("fs_rpc_inode_chunk_stat_recv() called i_ino=%ld index=%d",
+		  i_ino, index);
+
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	user_data->n = 2;
+	user_data->iov[0].buffer = malloc(sizeof(int));
+	user_data->iov[0].length = sizeof(int);
+	user_data->iov[1].buffer = malloc(sizeof(size_t));
+	user_data->iov[1].length = sizeof(size_t);
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
+		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
+	    .cb =
+		{
+		    .send = fs_rpc_iov_reply_cb,
+		},
+	    .flags = UCP_AM_SEND_FLAG_EAGER,
+	    .datatype = UCP_DATATYPE_IOV,
+	    .user_data = user_data,
+	};
+
+	if (fs_inode_chunk_stat(i_ino, index,
+				(size_t *)user_data->iov[1].buffer)) {
+		log_debug("fs_rpc_inode_chunk_stat_recv() i_ino=%ld index=%d "
+			  "does not exist",
+			  i_ino, index);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else {
+		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+	}
+
+	ucs_status_ptr_t req = ucp_am_send_nbx(
+	    param->reply_ep, RPC_INODE_CHUNK_STAT_REP, user_data->header,
+	    header_length, user_data->iov, user_data->n, &rparam);
+
+	if (req == NULL) {
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+	} else if (UCS_PTR_IS_ERR(req)) {
+		log_error("ucp_am_send_nbx() failed: %s",
+			  ucs_status_string(UCS_PTR_STATUS(req)));
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+		ucs_status_t status = UCS_PTR_STATUS(req);
+		ucp_request_free(req);
+		return (status);
+	}
+	return (UCS_OK);
+}
+
 static int
 fs_rpc_inode_write_internal(uint32_t i_ino, uint32_t index, off_t offset,
 			    size_t size, const void *buf, ucp_ep_h reply_ep,
@@ -949,6 +1023,21 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 		 worker, &dir_move_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(dir move) failed: %s",
 			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t chunk_stat_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_INODE_CHUNK_STAT_REQ,
+	    .cb = fs_rpc_inode_chunk_stat_recv,
+	    .arg = ctx,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 worker, &chunk_stat_param)) != UCS_OK) {
+		log_error(
+		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
+		    ucs_status_string(status));
 		return (-1);
 	}
 	return (0);

@@ -64,6 +64,25 @@ fs_rpc_inode_stat_reply(void *arg, const void *header, size_t header_length,
 
 typedef struct {
 	int ret;
+	size_t size;
+} inode_chunk_stat_handle_t;
+
+ucs_status_t
+fs_rpc_inode_chunk_stat_reply(void *arg, const void *header,
+			      size_t header_length, void *data, size_t length,
+			      const ucp_am_recv_param_t *param)
+{
+	inode_chunk_stat_handle_t *handle =
+	    *(inode_chunk_stat_handle_t **)header;
+	size_t offset = 0;
+	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(int);
+	handle->size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	return (UCS_OK);
+}
+
+typedef struct {
+	int ret;
 	ssize_t ss;
 	ucs_status_ptr_t req;
 	inode_write_header_t header;
@@ -323,6 +342,21 @@ fs_client_init(char *addrfile)
 		 env.ucp_worker, &inode_read_reply_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(inode read) failed: %s",
+		    ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t inode_chunk_stat_reply_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_INODE_CHUNK_STAT_REP,
+	    .cb = fs_rpc_inode_chunk_stat_reply,
+	    .arg = NULL,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 env.ucp_worker, &inode_chunk_stat_reply_param)) != UCS_OK) {
+		log_error(
+		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
 		    ucs_status_string(status));
 		return (-1);
 	}
@@ -774,6 +808,65 @@ fs_rpc_inode_stat(const char *path, fs_stat_t *st)
 	*st = handle.st;
 	log_debug("fs_rpc_inode_stat: succeeded ino=%zu chunksize=%zu",
 		  st->i_ino, st->chunk_size);
+	return (0);
+}
+
+int
+fs_rpc_inode_chunk_stat(uint32_t i_ino, uint32_t index, size_t *size)
+{
+	int target = (i_ino + index) % env.nvprocs;
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = &i_ino;
+	iov[0].length = sizeof(i_ino);
+	iov[1].buffer = &index;
+	iov[1].length = sizeof(index);
+
+	inode_chunk_stat_handle_t handle;
+	handle.ret = FINCH_INPROGRESS;
+
+	void *handle_addr = &handle;
+	int *ret_addr = &handle.ret;
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+	ucs_status_ptr_t req;
+	req =
+	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_CHUNK_STAT_REQ,
+			    &handle_addr, sizeof(handle_addr), iov, 2, &rparam);
+	ucs_status_t status;
+	while (!all_req_finish(&req, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (req != NULL) {
+		status = ucp_request_check_status(req);
+		if (status != UCS_OK) {
+			log_error("fs_rpc_inode_chunk_stat: ucp_am_send_nbx() "
+				  "failed: %s",
+				  ucs_status_string(status));
+			errno = EIO;
+			return (-1);
+		}
+		ucp_request_free(req);
+	}
+
+	log_debug("fs_rpc_inode_chunk_stat: ucp_am_send_nbx() succeeded");
+	while (!all_ret_finish(&ret_addr, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (handle.ret != FINCH_OK) {
+		log_error("fs_rpc_inode_chunk_stat: stat(index=%zu) failed: %s",
+			  index, strerror(-handle.ret));
+		errno = -handle.ret;
+		return (-1);
+	}
+	*size = handle.size;
+	log_debug(
+	    "fs_rpc_inode_chunk_stat: succeeded ino=%zu index=%zu size=%zu",
+	    i_ino, index, *size);
 	return (0);
 }
 

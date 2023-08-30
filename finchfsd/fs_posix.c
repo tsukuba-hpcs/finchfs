@@ -79,3 +79,22 @@ fs_inode_read(uint32_t i_ino, uint32_t index, off_t offset, size_t size,
 	close(fd);
 	return (ssize_t)(ret);
 }
+
+int
+fs_inode_chunk_stat(uint32_t i_ino, uint32_t index, size_t *size)
+{
+	log_debug("fs_inode_chunk_stat() called i_ino=%u index=%u", i_ino,
+		  index);
+	char buffer[128];
+	snprintf(buffer, sizeof(buffer), "%u.%u", i_ino, index);
+	struct stat st;
+	int ret;
+	ret = stat(buffer, &st);
+	if (ret < 0) {
+		log_error("fs_inode_chunk_stat stat() failed: %s",
+			  strerror(errno));
+		return (-1);
+	}
+	*size = (size_t)st.st_size;
+	return (0);
+}
