@@ -23,8 +23,10 @@ ssize_t fs_async_rpc_inode_read_wait(void **hdles, int nreqs);
 int fs_client_init(char *addrfile);
 int fs_client_term(void);
 
-int fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs);
-int fs_server_term();
+int fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
+		   int trank, int nthreads, int *shutdown);
+int fs_server_term(int trank);
+void *fs_server_progress(void *arg);
 
 typedef struct {
 	void *header;

@@ -33,13 +33,18 @@ POSSIBILITY OF SUCH DAMAGE.
 #include "fs.h"
 #include "log.h"
 
+#define MAX_NTHREADS 128
+
 struct worker_ctx {
 	struct hashmap *dirtable;
 	int rank;
 	int nprocs;
+	int trank;
+	int nthreads;
 	uint32_t i_ino;
 	ucp_worker_h ucp_worker;
-} all_ctx;
+	int *shutdown;
+} all_ctx[MAX_NTHREADS];
 
 typedef struct {
 	char *dirname;
@@ -54,7 +59,8 @@ typedef struct {
 static uint32_t
 alloc_ino(struct worker_ctx *ctx)
 {
-	return __atomic_fetch_add(&ctx->i_ino, ctx->nprocs, __ATOMIC_SEQ_CST);
+	return __atomic_fetch_add(&ctx->i_ino, ctx->nprocs * ctx->nthreads,
+				  __ATOMIC_SEQ_CST);
 }
 
 static int
@@ -589,22 +595,31 @@ fs_rpc_inode_read_recv(void *arg, const void *header, size_t header_length,
 }
 
 int
-fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs)
+fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
+	       int trank, int nthreads, int *shutdown)
 {
-	all_ctx.dirtable =
-	    hashmap_new(sizeof(dirtable_t), 0, 0, 0, dirtable_hash,
-			dirtable_compare, NULL, NULL);
+	if (trank >= MAX_NTHREADS) {
+		log_error("fs_server_init() trank=%d >= MAX_NTHREADS=%d", trank,
+			  MAX_NTHREADS);
+		return (-1);
+	}
+	struct worker_ctx *ctx = &all_ctx[trank];
+	ctx->dirtable = hashmap_new(sizeof(dirtable_t), 0, 0, 0, dirtable_hash,
+				    dirtable_compare, NULL, NULL);
 	struct hashmap *entries =
 	    hashmap_new(sizeof(direntry_t), 0, 0, 0, direntry_hash,
 			direntry_compare, NULL, NULL);
 	dirtable_t dirt = {
 	    .dirname = "", .mode = S_IFDIR | S_IRWXU, .entries = entries};
-	hashmap_set(all_ctx.dirtable, &dirt);
+	hashmap_set(ctx->dirtable, &dirt);
 
-	all_ctx.rank = rank;
-	all_ctx.nprocs = nprocs;
-	all_ctx.i_ino = rank;
-	all_ctx.ucp_worker = worker;
+	ctx->rank = rank;
+	ctx->nprocs = nprocs;
+	ctx->trank = trank;
+	ctx->nthreads = nthreads;
+	ctx->i_ino = rank;
+	ctx->ucp_worker = worker;
+	ctx->shutdown = shutdown;
 
 	fs_inode_init(db_dir);
 
@@ -615,7 +630,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs)
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_MKDIR_REQ,
 	    .cb = fs_rpc_mkdir_recv,
-	    .arg = &all_ctx,
+	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(worker, &mkdir_param)) !=
 	    UCS_OK) {
@@ -629,7 +644,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs)
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_INODE_CREATE_REQ,
 	    .cb = fs_rpc_inode_create_recv,
-	    .arg = &all_ctx,
+	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
 		 worker, &inode_create_param)) != UCS_OK) {
@@ -643,7 +658,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs)
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_INODE_STAT_REQ,
 	    .cb = fs_rpc_inode_stat_recv,
-	    .arg = &all_ctx,
+	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
 		 worker, &inode_stat_param)) != UCS_OK) {
@@ -657,7 +672,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs)
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_INODE_WRITE_REQ,
 	    .cb = fs_rpc_inode_write_recv,
-	    .arg = &all_ctx,
+	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
 		 worker, &inode_write_param)) != UCS_OK) {
@@ -671,7 +686,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs)
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_INODE_READ_REQ,
 	    .cb = fs_rpc_inode_read_recv,
-	    .arg = &all_ctx,
+	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
 		 worker, &inode_read_param)) != UCS_OK) {
@@ -683,14 +698,26 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs)
 }
 
 int
-fs_server_term()
+fs_server_term(int trank)
 {
+	struct worker_ctx *ctx = &all_ctx[trank];
 	size_t iter = 0;
 	void *item;
-	while (hashmap_iter(all_ctx.dirtable, &iter, &item)) {
+	while (hashmap_iter(ctx->dirtable, &iter, &item)) {
 		const dirtable_t *table = item;
 		hashmap_free(table->entries);
 	}
-	hashmap_free(all_ctx.dirtable);
+	hashmap_free(ctx->dirtable);
 	return (0);
+}
+
+void *
+fs_server_progress(void *arg)
+{
+	int trank = *(int *)arg;
+	struct worker_ctx *ctx = &all_ctx[trank];
+	while (*ctx->shutdown == 0) {
+		ucp_worker_progress(ctx->ucp_worker);
+	}
+	return (NULL);
 }
