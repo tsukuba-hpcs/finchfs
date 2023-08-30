@@ -83,7 +83,7 @@ fs_inode_unlink(char *path, uint32_t *i_ino)
 		log_error("open() failed: %s", strerror(errno));
 		return (-1);
 	}
-	ret = read(fd, i_ino, sizeof(*i_ino));
+	ret = pread(fd, i_ino, sizeof(*i_ino), sizeof(size_t));
 	if (ret != sizeof(*i_ino)) {
 		log_error("read() failed: %s", strerror(errno));
 		close(fd);

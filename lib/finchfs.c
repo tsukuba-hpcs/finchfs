@@ -85,6 +85,7 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 	fd_table[fd].mode = mode;
 	fd_table[fd].chunk_size = chunk_size;
 	fd_table[fd].pos = 0;
+	fd_table[fd].i_ino = 0;
 
 	mode |= S_IFREG;
 	ret = fs_rpc_inode_create(p, mode, chunk_size, &fd_table[fd].i_ino);
@@ -319,5 +320,39 @@ finchfs_mkdir(const char *path, mode_t mode)
 	mode |= S_IFDIR;
 	ret = fs_rpc_mkdir(p, mode);
 	free(p);
+	return (ret);
+}
+
+int
+finchfs_rename(const char *oldpath, const char *newpath)
+{
+	int ret;
+	char *oldp = canonical_path(oldpath);
+	char *newp = canonical_path(newpath);
+	fs_stat_t st;
+	ret = fs_rpc_inode_stat(oldp, &st);
+	if (ret) {
+		free(oldp);
+		free(newp);
+		return (-1);
+	}
+	if (S_ISDIR(st.mode)) {
+		log_error("directory rename is not supported");
+		free(oldp);
+		free(newp);
+		return (-1);
+	}
+	log_debug("finchfs_rename() called oldpath=%s newpath=%s inode=%d",
+		  oldpath, newpath, st.i_ino);
+	ret = fs_rpc_inode_unlink(oldp, &st.i_ino);
+	if (ret) {
+		free(oldp);
+		free(newp);
+		return (-1);
+	}
+	log_debug("finchfs_rename(): unlink inode=%d", st.i_ino);
+	ret = fs_rpc_inode_create(newp, st.mode, st.chunk_size, &st.i_ino);
+	free(oldp);
+	free(newp);
 	return (ret);
 }

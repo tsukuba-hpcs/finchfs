@@ -258,6 +258,29 @@ TEST(FinchfsTest, Mkdir3)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Rename)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	char buf[128];
+	rnd_fill(buf, sizeof(buf));
+	fd = finchfs_create("/rename1_before", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_rename("/rename1_before", "/rename1_after"), 0);
+	fd = finchfs_open("/rename1_after", 0);
+	EXPECT_EQ(fd, 0);
+	char buf2[128];
+	n = finchfs_read(fd, buf2, sizeof(buf2));
+	EXPECT_EQ(n, sizeof(buf2));
+	EXPECT_TRUE(memcmp(buf, buf2, sizeof(buf2)) == 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {

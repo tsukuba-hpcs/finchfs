@@ -241,6 +241,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	char *path;
 	mode_t mode;
 	size_t chunk_size;
+	uint32_t i_ino;
 	size_t offset = 0;
 	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(path_len);
@@ -249,6 +250,8 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	mode = *(mode_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(mode);
 	chunk_size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(chunk_size);
+	i_ino = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
 	log_debug("fs_rpc_inode_create_recv() called path=%s", path);
 
@@ -287,7 +290,9 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	} else {
 		log_debug("fs_rpc_inode_create_recv() create path=%s", path);
 		int ret;
-		uint32_t i_ino = alloc_ino(ctx);
+		if (i_ino == 0) {
+			i_ino = alloc_ino(ctx);
+		}
 		ret = fs_inode_create(path, mode, chunk_size, i_ino);
 		if (ret) {
 			*(int *)(user_data->iov[0].buffer) = -errno;
@@ -705,7 +710,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	ctx->nprocs = nprocs;
 	ctx->trank = trank;
 	ctx->nthreads = nthreads;
-	ctx->i_ino = rank;
+	ctx->i_ino = rank + (nprocs * nthreads);
 	ctx->ucp_worker = worker;
 	ctx->shutdown = shutdown;
 
