@@ -61,7 +61,7 @@ fs_inode_create(char *path, mode_t mode, size_t chunk_size, uint32_t i_ino)
 	} else if (S_ISDIR(mode)) {
 		int ret;
 		ret = mkdir(path, mode);
-		if (ret == -1) {
+		if (ret == -1 && errno != EEXIST) {
 			log_error("mkdir() failed: %s", strerror(errno));
 			return (-1);
 		}

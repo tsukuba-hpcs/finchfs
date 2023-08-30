@@ -95,6 +95,20 @@ main(int argc, char **argv)
 	};
 	ucs_status_t status;
 	pthread_t handler_thread;
+	int c;
+	while ((c = getopt(argc, argv, "d:v:")) != -1) {
+		switch (c) {
+		case 'd':
+			ctx.db_dir = strdup(optarg);
+			break;
+		case 'v':
+			log_set_level(optarg);
+			break;
+		default:
+			log_fatal("Unknown option %c", c);
+			return (-1);
+		}
+	}
 
 	sigemptyset(&sigset);
 	sigaddset(&sigset, SIGINT);

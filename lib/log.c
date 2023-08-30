@@ -44,6 +44,8 @@ static struct {
     {"debug", LOG_DEBUG},     /* debug-level messages */
     {NULL, -1}};
 
+static int log_prio = LOG_INFO;
+
 static void
 log_time(char *s, int size)
 {
@@ -73,6 +75,8 @@ log_name_from_priority(int priority)
 void
 log_vmessage(int priority, const char *format, va_list ap)
 {
+	if (priority > log_prio)
+		return;
 	char buffer[2048];
 	char tb[TIMEBUF_SIZE];
 
@@ -132,4 +136,15 @@ log_fatal(const char *format, ...)
 	log_vmessage(LOG_ERR, format, ap);
 	va_end(ap);
 	exit(2);
+}
+
+void
+log_set_level(const char *level)
+{
+	for (int i = 0; i <= LOG_DEBUG; ++i) {
+		if (strcmp(priority_names[i].name, level) == 0) {
+			log_prio = priority_names[i].val;
+			return;
+		}
+	}
 }
