@@ -222,6 +222,19 @@ TEST(FinchfsTest, Read3)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, UNLINK)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/unlink1", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_unlink("/unlink1"), 0);
+	fd = finchfs_open("/unlink1", 0);
+	EXPECT_EQ(fd, -1);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 TEST(FinchfsTest, Mkdir)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);

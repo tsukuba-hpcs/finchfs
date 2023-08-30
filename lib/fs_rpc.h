@@ -8,6 +8,7 @@
 #define RPC_INODE_WRITE_REP 0x08
 #define RPC_INODE_READ_REQ 0x09
 #define RPC_INODE_READ_REP 0x0a
+#define RPC_INODE_UNLINK_REQ 0x0b
 
 int fs_rpc_mkdir(const char *path, mode_t mode);
 int fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
@@ -19,6 +20,7 @@ ssize_t fs_async_rpc_inode_write_wait(void **hdles, int nreqs);
 void *fs_async_rpc_inode_read(uint32_t i_ino, uint32_t index, off_t offset,
 			      size_t size, void *buf);
 ssize_t fs_async_rpc_inode_read_wait(void **hdles, int nreqs);
+int fs_rpc_inode_unlink(const char *path, uint32_t *i_ino);
 
 int fs_client_init(char *addrfile);
 int fs_client_term(void);

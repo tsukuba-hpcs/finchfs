@@ -200,7 +200,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 		int ret;
 		ret = fs_inode_create(path, mode, 0, alloc_ino(ctx));
 		if (ret) {
-			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
+			*(int *)(user_data->iov[0].buffer) = -errno;
 		} else {
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		}
@@ -250,8 +250,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	offset += sizeof(mode);
 	chunk_size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
-	log_debug("fs_rpc_inode_create_recv() called path=%s header_length=%d",
-		  path, header_length);
+	log_debug("fs_rpc_inode_create_recv() called path=%s", path);
 
 	iov_req_t *user_data =
 	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
@@ -291,10 +290,12 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		uint32_t i_ino = alloc_ino(ctx);
 		ret = fs_inode_create(path, mode, chunk_size, i_ino);
 		if (ret) {
-			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
+			*(int *)(user_data->iov[0].buffer) = -errno;
 		} else {
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 			*(uint32_t *)(user_data->iov[1].buffer) = i_ino;
+			direntry_t entry = {.entryname = strdup(path)};
+			hashmap_set(pardirt->entries, &entry);
 		}
 	}
 	free(pardir);
@@ -302,6 +303,93 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	ucs_status_ptr_t req = ucp_am_send_nbx(
 	    param->reply_ep, RPC_INODE_CREATE_REP, user_data->header,
 	    header_length, user_data->iov, user_data->n, &rparam);
+	if (req == NULL) {
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+	} else if (UCS_PTR_IS_ERR(req)) {
+		log_error("ucp_am_send_nbx() failed: %s",
+			  ucs_status_string(UCS_PTR_STATUS(req)));
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+		ucs_status_t status = UCS_PTR_STATUS(req);
+		ucp_request_free(req);
+		return (status);
+	}
+	return (UCS_OK);
+}
+
+ucs_status_t
+fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
+			 void *data, size_t length,
+			 const ucp_am_recv_param_t *param)
+{
+	struct worker_ctx *ctx = (struct worker_ctx *)arg;
+	int path_len;
+	char *path;
+	size_t offset = 0;
+	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(path_len);
+	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+
+	log_debug("fs_rpc_inode_unlink_recv() called path=%s", path);
+
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	user_data->n = 2;
+	user_data->iov[0].buffer = malloc(sizeof(int));
+	user_data->iov[0].length = sizeof(int);
+	user_data->iov[1].buffer = malloc(sizeof(uint32_t));
+	user_data->iov[1].length = sizeof(uint32_t);
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
+		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
+	    .cb =
+		{
+		    .send = fs_rpc_iov_reply_cb,
+		},
+	    .flags = UCP_AM_SEND_FLAG_EAGER,
+	    .datatype = UCP_DATATYPE_IOV,
+	    .user_data = user_data,
+	};
+
+	char *pardir = fs_dirname(path);
+
+	dirtable_t *pardirt =
+	    hashmap_get(ctx->dirtable, &(dirtable_t){.dirname = pardir});
+
+	if (pardirt == NULL) {
+		log_debug(
+		    "fs_rpc_inode_unlink_recv() parent path=%s does not exist",
+		    pardir);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else {
+		int ret;
+		ret =
+		    fs_inode_unlink(path, (uint32_t *)user_data->iov[1].buffer);
+		if (ret) {
+			*(int *)(user_data->iov[0].buffer) = -errno;
+		} else {
+			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+			hashmap_delete(pardirt->entries,
+				       &(direntry_t){.entryname = path});
+		}
+	}
+	free(pardir);
+
+	ucs_status_ptr_t req = ucp_am_send_nbx(
+	    param->reply_ep, RPC_INODE_CREATE_REP, user_data->header,
+	    header_length, user_data->iov, user_data->n, &rparam);
+
 	if (req == NULL) {
 		free(user_data->header);
 		for (int i = 0; i < user_data->n; i++) {
@@ -649,6 +737,20 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	if ((status = ucp_worker_set_am_recv_handler(
 		 worker, &inode_create_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(create) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t inode_unlink_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_INODE_UNLINK_REQ,
+	    .cb = fs_rpc_inode_unlink_recv,
+	    .arg = ctx,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 worker, &inode_unlink_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(unlink) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}

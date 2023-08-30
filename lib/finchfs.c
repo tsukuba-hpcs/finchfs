@@ -301,6 +301,17 @@ finchfs_read(int fd, void *buf, size_t size)
 }
 
 int
+finchfs_unlink(const char *path)
+{
+	int ret;
+	uint32_t i_ino;
+	char *p = canonical_path(path);
+	ret = fs_rpc_inode_unlink(p, &i_ino);
+	free(p);
+	return (ret);
+}
+
+int
 finchfs_mkdir(const char *path, mode_t mode)
 {
 	int ret;

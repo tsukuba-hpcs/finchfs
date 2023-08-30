@@ -73,6 +73,32 @@ fs_inode_create(char *path, mode_t mode, size_t chunk_size, uint32_t i_ino)
 }
 
 int
+fs_inode_unlink(char *path, uint32_t *i_ino)
+{
+	int fd;
+	int ret;
+	log_debug("fs_inode_unlink() called path=%s", path);
+	fd = open(path, O_RDONLY);
+	if (fd < 0) {
+		log_error("open() failed: %s", strerror(errno));
+		return (-1);
+	}
+	ret = read(fd, i_ino, sizeof(*i_ino));
+	if (ret != sizeof(*i_ino)) {
+		log_error("read() failed: %s", strerror(errno));
+		close(fd);
+		return (-1);
+	}
+	close(fd);
+	ret = unlink(path);
+	if (ret == -1) {
+		log_error("unlink() failed: %s", strerror(errno));
+		return (-1);
+	}
+	return (0);
+}
+
+int
 fs_inode_stat(char *path, fs_stat_t *st)
 {
 	log_debug("fs_inode_stat() called path=%s", path);

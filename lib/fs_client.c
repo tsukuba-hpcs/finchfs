@@ -548,6 +548,65 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 }
 
 int
+fs_rpc_inode_unlink(const char *path, uint32_t *i_ino)
+{
+	int target = path_to_target_hash(path, env.nvprocs);
+	int path_len = strlen(path) + 1;
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = &path_len;
+	iov[0].length = sizeof(path_len);
+	iov[1].buffer = (void *)path;
+	iov[1].length = path_len;
+
+	inode_create_handle_t handle;
+	handle.ret = FINCH_INPROGRESS;
+	handle.i_ino = 0;
+	void *handle_addr = &handle;
+	int *ret_addr = &handle.ret;
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t req;
+	req =
+	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_UNLINK_REQ,
+			    &handle_addr, sizeof(handle_addr), iov, 2, &rparam);
+
+	ucs_status_t status;
+	while (!all_req_finish(&req, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (req != NULL) {
+		status = ucp_request_check_status(req);
+		if (status != UCS_OK) {
+			log_error(
+			    "fs_rpc_inode_unlink: ucp_am_send_nbx() failed: %s",
+			    ucs_status_string(status));
+			return (-1);
+		}
+		ucp_request_free(req);
+	}
+
+	log_debug("fs_rpc_inode_unlink: ucp_am_send_nbx() succeeded");
+	while (!all_ret_finish(&ret_addr, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (handle.ret != FINCH_OK) {
+		log_error("fs_rpc_inode_unlink: unlink() failed: %s",
+			  strerror(-handle.ret));
+		errno = -handle.ret;
+		return (-1);
+	}
+	log_debug("fs_rpc_inode_unlink: succeeded ino=%d", handle.i_ino);
+	*i_ino = handle.i_ino;
+	return (0);
+}
+
+int
 fs_rpc_inode_stat(const char *path, fs_stat_t *st)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
