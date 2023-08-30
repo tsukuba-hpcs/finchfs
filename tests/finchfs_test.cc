@@ -295,6 +295,23 @@ TEST(FinchfsTest, Rename)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, RenameDir)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/XXX", S_IRWXU), 0);
+	EXPECT_EQ(finchfs_mkdir("/XXX/YYY", S_IRWXU), 0);
+	int fd;
+	fd = finchfs_create("/XXX/YYY/file1", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_rename("/XXX/YYY", "/XXX/ZZZ"), 0);
+	fd = finchfs_open("/XXX/ZZZ/file1", 0);
+	EXPECT_EQ(fd, 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_rmdir("/XXX/ZZZ"), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {

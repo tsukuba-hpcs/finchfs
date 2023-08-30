@@ -103,7 +103,7 @@ get_parent_and_filename(char *filename, const char *path,
 	int path_len = strlen(path) + 1;
 	char name[128];
 	while ((p = strchr(p, '/')) != NULL) {
-		memcpy(name, path, p - prev);
+		memcpy(name, prev, p - prev);
 		name[p - prev] = '\0';
 		prev = ++p;
 		e = hashmap_get(e->entries, &(entry_t){.name = name});
@@ -198,7 +198,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 		entry_t newent = {
 		    .name = strdup(dirname),
 		};
-		const entry_t *ent = hashmap_get(parent->entries, &newent);
+		entry_t *ent = hashmap_get(parent->entries, &newent);
 		if (ent != NULL) {
 			log_debug("fs_rpc_mkdir_recv() path=%s already exists",
 				  path);
@@ -216,11 +216,12 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 					entry_compare, NULL, NULL);
 			hashmap_set(parent->entries, &newent);
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+			ent = hashmap_get(parent->entries, &newent);
 		}
 	}
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_MKDIR_REP, user_data->header, header_length,
+	    param->reply_ep, RPC_RET_REP, user_data->header, header_length,
 	    user_data->iov, user_data->n, &rparam);
 	if (req == NULL) {
 		free(user_data->header);
@@ -313,8 +314,8 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	}
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_INODE_CREATE_REP, user_data->header,
-	    header_length, user_data->iov, user_data->n, &rparam);
+	    param->reply_ep, RPC_INODE_REP, user_data->header, header_length,
+	    user_data->iov, user_data->n, &rparam);
 	if (req == NULL) {
 		free(user_data->header);
 		for (int i = 0; i < user_data->n; i++) {
@@ -399,8 +400,8 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 	}
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_INODE_CREATE_REP, user_data->header,
-	    header_length, user_data->iov, user_data->n, &rparam);
+	    param->reply_ep, RPC_INODE_REP, user_data->header, header_length,
+	    user_data->iov, user_data->n, &rparam);
 
 	if (req == NULL) {
 		free(user_data->header);
@@ -712,6 +713,115 @@ fs_rpc_inode_read_recv(void *arg, const void *header, size_t header_length,
 	return (UCS_OK);
 }
 
+ucs_status_t
+fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
+		     void *data, size_t length,
+		     const ucp_am_recv_param_t *param)
+{
+	struct worker_ctx *ctx = (struct worker_ctx *)arg;
+	int opath_len;
+	int npath_len;
+	char *opath;
+	char *npath;
+	size_t offset = 0;
+	opath_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(opath_len);
+	opath = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += opath_len;
+	npath_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(npath_len);
+	npath = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+
+	log_debug("fs_rpc_dir_move_recv() called opath=%s npath=%s", opath,
+		  npath);
+
+	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	user_data->n = 1;
+	user_data->iov[0].buffer = malloc(sizeof(int));
+	user_data->iov[0].length = sizeof(int);
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
+		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
+	    .cb =
+		{
+		    .send = fs_rpc_iov_reply_cb,
+		},
+	    .flags = UCP_AM_SEND_FLAG_EAGER,
+	    .datatype = UCP_DATATYPE_IOV,
+	    .user_data = user_data,
+	};
+	char odirname[128];
+	char ndirname[128];
+	entry_t *oparent = get_parent_and_filename(odirname, opath, ctx);
+	entry_t *nparent = get_parent_and_filename(ndirname, npath, ctx);
+
+	if (oparent == NULL) {
+		log_debug("fs_rpc_dir_move_recv() opath=%s does not exist",
+			  opath);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else if (nparent == NULL) {
+		log_debug("fs_rpc_dir_move_recv() npath=%s does not exist",
+			  npath);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else {
+		entry_t key = {
+		    .name = odirname,
+		};
+		entry_t *ent = hashmap_get(oparent->entries, &key);
+		if (ent == NULL) {
+			log_debug(
+			    "fs_rpc_dir_move_recv() opath=%s does not exist",
+			    opath);
+			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+		} else if (!S_ISDIR(ent->mode)) {
+			log_debug("fs_rpc_dir_move_recv() opath=%s is not a "
+				  "directory",
+				  opath);
+			*(int *)(user_data->iov[0].buffer) = FINCH_EISDIR;
+		} else {
+			entry_t newent = {
+			    .name = strdup(ndirname),
+			    .mode = ent->mode,
+			    .chunk_size = ent->chunk_size,
+			    .i_ino = ent->i_ino,
+			    .mtime = ent->mtime,
+			    .ctime = ent->ctime,
+			    .entries = ent->entries,
+			};
+			hashmap_delete(oparent->entries, &key);
+			hashmap_set(nparent->entries, &newent);
+			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+		}
+	}
+
+	ucs_status_ptr_t req = ucp_am_send_nbx(
+	    param->reply_ep, RPC_RET_REP, user_data->header, header_length,
+	    user_data->iov, user_data->n, &rparam);
+	if (req == NULL) {
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+	} else if (UCS_PTR_IS_ERR(req)) {
+		log_error("ucp_am_send_nbx() failed: %s",
+			  ucs_status_string(UCS_PTR_STATUS(req)));
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+		ucs_status_t status = UCS_PTR_STATUS(req);
+		ucp_request_free(req);
+		return (status);
+	}
+	return (UCS_OK);
+}
+
 int
 fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	       int trank, int nthreads, int *shutdown)
@@ -824,6 +934,20 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	if ((status = ucp_worker_set_am_recv_handler(
 		 worker, &inode_read_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(write) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t dir_move_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_DIR_MOVE_REQ,
+	    .cb = fs_rpc_dir_move_recv,
+	    .arg = ctx,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 worker, &dir_move_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(dir move) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}

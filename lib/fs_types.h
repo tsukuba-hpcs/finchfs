@@ -27,4 +27,5 @@ typedef enum {
 	FINCH_ENOENT = -2,
 	FINCH_EIO = -5,
 	FINCH_EEXIST = -17,
+	FINCH_EISDIR = -21,
 } finch_status_t;

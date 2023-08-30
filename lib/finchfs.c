@@ -353,10 +353,11 @@ finchfs_rename(const char *oldpath, const char *newpath)
 		return (-1);
 	}
 	if (S_ISDIR(st.mode)) {
-		log_error("directory rename is not supported");
+		int ret;
+		ret = fs_rpc_dir_move(oldp, newp);
 		free(oldp);
 		free(newp);
-		return (-1);
+		return (ret);
 	}
 	log_debug("finchfs_rename() called oldpath=%s newpath=%s inode=%d",
 		  oldpath, newpath, st.i_ino);
