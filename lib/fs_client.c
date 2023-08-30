@@ -394,10 +394,16 @@ static int
 path_to_target_hash(const char *path, int div)
 {
 	long h = 0;
+	int slash = -1;
 	char *head = strdup(path);
 	char *next;
 	long n;
-	for (char *p = head; *p != '\0'; p = next) {
+	for (int i = 0; head[i] != '\0'; i++) {
+		if (head[i] == '/') {
+			slash = i;
+		}
+	}
+	for (char *p = head + slash + 1; *p != '\0'; p = next) {
 		n = strtol(p, &next, 10);
 		if (next == p) {
 			h += *p;

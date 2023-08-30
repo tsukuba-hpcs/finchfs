@@ -27,6 +27,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include "fs_types.h"
 #include "fs_rpc.h"
 #include "hashmap.h"
@@ -35,8 +36,17 @@ POSSIBILITY OF SUCH DAMAGE.
 
 #define MAX_NTHREADS 128
 
+typedef struct {
+	char *name;
+	mode_t mode;
+	size_t chunk_size;
+	uint32_t i_ino;
+	struct timespec mtime;
+	struct timespec ctime;
+	struct hashmap *entries;
+} entry_t;
+
 struct worker_ctx {
-	struct hashmap *dirtable;
 	int rank;
 	int nprocs;
 	int trank;
@@ -44,17 +54,8 @@ struct worker_ctx {
 	uint32_t i_ino;
 	ucp_worker_h ucp_worker;
 	int *shutdown;
+	entry_t root;
 } all_ctx[MAX_NTHREADS];
-
-typedef struct {
-	char *dirname;
-	mode_t mode;
-	struct hashmap *entries;
-} dirtable_t;
-
-typedef struct {
-	char *entryname;
-} direntry_t;
 
 static uint32_t
 alloc_ino(struct worker_ctx *ctx)
@@ -64,33 +65,64 @@ alloc_ino(struct worker_ctx *ctx)
 }
 
 static int
-dirtable_compare(const void *a, const void *b, void *udata)
+entry_compare(const void *a, const void *b, void *udata)
 {
-	const dirtable_t *da = a;
-	const dirtable_t *db = b;
-	return strcmp(da->dirname, db->dirname);
+	const entry_t *ea = a;
+	const entry_t *eb = b;
+	return strcmp(ea->name, eb->name);
 }
 
 static uint64_t
-dirtable_hash(const void *item, uint64_t seed0, uint64_t seed1)
+entry_hash(const void *item, uint64_t seed0, uint64_t seed1)
 {
-	const dirtable_t *d = item;
-	return hashmap_sip(d->dirname, strlen(d->dirname), seed0, seed1);
+	const entry_t *e = item;
+	return hashmap_sip(e->name, strlen(e->name), seed0, seed1);
 }
 
-static int
-direntry_compare(const void *a, const void *b, void *udata)
+static void
+free_meta_tree(entry_t *entry)
 {
-	const direntry_t *da = a;
-	const direntry_t *db = b;
-	return strcmp(da->entryname, db->entryname);
+	if (S_ISDIR(entry->mode)) {
+		size_t iter = 0;
+		void *item;
+		while (hashmap_iter(entry->entries, &iter, &item)) {
+			entry_t *child = item;
+			free_meta_tree(child);
+		}
+		hashmap_free(entry->entries);
+	}
 }
 
-static uint64_t
-direntry_hash(const void *item, uint64_t seed0, uint64_t seed1)
+static entry_t *
+get_parent_and_filename(char *filename, const char *path,
+			struct worker_ctx *ctx)
 {
-	const direntry_t *d = item;
-	return hashmap_sip(d->entryname, strlen(d->entryname), seed0, seed1);
+	entry_t *e = &ctx->root;
+	char *prev = (char *)path;
+	char *p = prev;
+	int path_len = strlen(path) + 1;
+	char name[128];
+	while ((p = strchr(p, '/')) != NULL) {
+		memcpy(name, path, p - prev);
+		name[p - prev] = '\0';
+		prev = ++p;
+		e = hashmap_get(e->entries, &(entry_t){.name = name});
+		if (e == NULL) {
+			log_error(
+			    "get_parent_and_filename() path=%s does not exist",
+			    path);
+			return (NULL);
+		}
+		if (!S_ISDIR(e->mode)) {
+			log_error("get_parent_and_filename() path=%s is not a "
+				  "directory",
+				  path);
+			return (NULL);
+		}
+	}
+	memcpy(filename, prev, path_len - (prev - path));
+	filename[path_len - (prev - path)] = '\0';
+	return (e);
 }
 
 static void
@@ -117,26 +149,6 @@ fs_rpc_contig_reply_cb(void *request, ucs_status_t status, void *user_data)
 	free(contig_req->header);
 	free(contig_req->buf);
 	free(contig_req);
-}
-
-static char *
-fs_dirname(const char *path)
-{
-	size_t p = strlen(path) - 1;
-	char *r;
-
-	while (p > 0 && path[p] != '/')
-		--p;
-
-	r = malloc(p + 1);
-	if (r == NULL) {
-		log_error("fs_dirname: no memory");
-		return (NULL);
-	}
-	strncpy(r, path, p);
-	r[p] = '\0';
-	log_debug("fs_dirname: path %s dirname %s", path, r);
-	return (r);
 }
 
 ucs_status_t
@@ -175,37 +187,37 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	    .datatype = UCP_DATATYPE_IOV,
 	    .user_data = user_data,
 	};
+	char dirname[128];
+	entry_t *parent = get_parent_and_filename(dirname, path, ctx);
 
-	char *pardir = fs_dirname(path);
-
-	dirtable_t *dirt =
-	    hashmap_get(ctx->dirtable, &(dirtable_t){.dirname = path});
-	dirtable_t *pardirt =
-	    hashmap_get(ctx->dirtable, &(dirtable_t){.dirname = pardir});
-	if (pardirt == NULL) {
+	if (parent == NULL) {
 		log_debug("fs_rpc_mkdir_recv() parent path=%s does not exist",
-			  pardir);
+			  path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
-	} else if (dirt != NULL) {
-		log_debug("fs_rpc_mkdir_recv() path=%s already exists", path);
-		*(int *)(user_data->iov[0].buffer) = FINCH_EEXIST;
 	} else {
-		log_debug("fs_rpc_mkdir_recv() create path=%s", path);
-		struct hashmap *entries =
-		    hashmap_new(sizeof(direntry_t), 0, 0, 0, direntry_hash,
-				direntry_compare, NULL, NULL);
-		dirtable_t dirt = {
-		    .dirname = strdup(path), .mode = mode, .entries = entries};
-		hashmap_set(ctx->dirtable, &dirt);
-		int ret;
-		ret = fs_inode_create(path, mode, 0, alloc_ino(ctx));
-		if (ret) {
-			*(int *)(user_data->iov[0].buffer) = -errno;
+		entry_t newent = {
+		    .name = strdup(dirname),
+		};
+		const entry_t *ent = hashmap_get(parent->entries, &newent);
+		if (ent != NULL) {
+			log_debug("fs_rpc_mkdir_recv() path=%s already exists",
+				  path);
+			free(newent.name);
+			*(int *)(user_data->iov[0].buffer) = FINCH_EEXIST;
 		} else {
+			log_debug("fs_rpc_mkdir_recv() create path=%s", path);
+			newent.mode = mode;
+			newent.chunk_size = 0;
+			newent.i_ino = alloc_ino(ctx);
+			timespec_get(&newent.mtime, TIME_UTC);
+			timespec_get(&newent.ctime, TIME_UTC);
+			newent.entries =
+			    hashmap_new(sizeof(entry_t), 0, 0, 0, entry_hash,
+					entry_compare, NULL, NULL);
+			hashmap_set(parent->entries, &newent);
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		}
 	}
-	free(pardir);
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
 	    param->reply_ep, RPC_MKDIR_REP, user_data->header, header_length,
@@ -278,32 +290,27 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	    .user_data = user_data,
 	};
 
-	char *pardir = fs_dirname(path);
-
-	dirtable_t *pardirt =
-	    hashmap_get(ctx->dirtable, &(dirtable_t){.dirname = pardir});
-	if (pardirt == NULL) {
-		log_debug(
-		    "fs_rpc_inode_create_recv() parent path=%s does not exist",
-		    pardir);
+	char filename[128];
+	entry_t *parent = get_parent_and_filename(filename, path, ctx);
+	if (parent == NULL) {
+		log_debug("fs_rpc_inode_create_recv() path=%s does not exist",
+			  path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
 		log_debug("fs_rpc_inode_create_recv() create path=%s", path);
-		int ret;
-		if (i_ino == 0) {
-			i_ino = alloc_ino(ctx);
-		}
-		ret = fs_inode_create(path, mode, chunk_size, i_ino);
-		if (ret) {
-			*(int *)(user_data->iov[0].buffer) = -errno;
-		} else {
-			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-			*(uint32_t *)(user_data->iov[1].buffer) = i_ino;
-			direntry_t entry = {.entryname = strdup(path)};
-			hashmap_set(pardirt->entries, &entry);
-		}
+		entry_t newent = {
+		    .name = strdup(filename),
+		    .mode = mode,
+		    .chunk_size = chunk_size,
+		    .i_ino = (i_ino == 0) ? alloc_ino(ctx) : i_ino,
+		    .entries = NULL,
+		};
+		timespec_get(&newent.mtime, TIME_UTC);
+		timespec_get(&newent.ctime, TIME_UTC);
+		hashmap_set(parent->entries, &newent);
+		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+		*(uint32_t *)(user_data->iov[1].buffer) = newent.i_ino;
 	}
-	free(pardir);
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
 	    param->reply_ep, RPC_INODE_CREATE_REP, user_data->header,
@@ -367,29 +374,29 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 	    .user_data = user_data,
 	};
 
-	char *pardir = fs_dirname(path);
-
-	dirtable_t *pardirt =
-	    hashmap_get(ctx->dirtable, &(dirtable_t){.dirname = pardir});
-
-	if (pardirt == NULL) {
-		log_debug(
-		    "fs_rpc_inode_unlink_recv() parent path=%s does not exist",
-		    pardir);
+	char name[128];
+	entry_t *parent = get_parent_and_filename(name, path, ctx);
+	if (parent == NULL) {
+		log_debug("fs_rpc_inode_unlink_recv() path=%s does not exist",
+			  path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		int ret;
-		ret =
-		    fs_inode_unlink(path, (uint32_t *)user_data->iov[1].buffer);
-		if (ret) {
-			*(int *)(user_data->iov[0].buffer) = -errno;
+		entry_t key = {
+		    .name = name,
+		};
+		entry_t *ent = hashmap_get(parent->entries, &key);
+		if (ent == NULL) {
+			log_debug(
+			    "fs_rpc_inode_unlink_recv() path=%s does not exist",
+			    path);
+			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 		} else {
+			*(uint32_t *)user_data->iov[1].buffer = ent->i_ino;
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-			hashmap_delete(pardirt->entries,
-				       &(direntry_t){.entryname = path});
+			free_meta_tree(ent);
+			hashmap_delete(parent->entries, &key);
 		}
 	}
-	free(pardir);
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
 	    param->reply_ep, RPC_INODE_CREATE_REP, user_data->header,
@@ -455,13 +462,31 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 	    .user_data = user_data,
 	};
 
-	int ret;
 	fs_stat_t *st = (fs_stat_t *)user_data->iov[1].buffer;
-	ret = fs_inode_stat(path, st);
-	if (ret) {
-		*(int *)(user_data->iov[0].buffer) = -errno;
+	char name[128];
+	entry_t *parent = get_parent_and_filename(name, path, ctx);
+	if (parent == NULL) {
+		log_debug("fs_rpc_inode_stat_recv() path=%s does not exist",
+			  path);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+		entry_t key = {
+		    .name = name,
+		};
+		const entry_t *ent = hashmap_get(parent->entries, &key);
+		if (ent == NULL) {
+			log_debug(
+			    "fs_rpc_inode_stat_recv() path=%s does not exist",
+			    path);
+			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+		} else {
+			st->chunk_size = ent->chunk_size;
+			st->i_ino = ent->i_ino;
+			st->mode = ent->mode;
+			st->mtime = ent->mtime;
+			st->ctime = ent->ctime;
+			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+		}
 	}
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
@@ -697,14 +722,6 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 		return (-1);
 	}
 	struct worker_ctx *ctx = &all_ctx[trank];
-	ctx->dirtable = hashmap_new(sizeof(dirtable_t), 0, 0, 0, dirtable_hash,
-				    dirtable_compare, NULL, NULL);
-	struct hashmap *entries =
-	    hashmap_new(sizeof(direntry_t), 0, 0, 0, direntry_hash,
-			direntry_compare, NULL, NULL);
-	dirtable_t dirt = {
-	    .dirname = "", .mode = S_IFDIR | S_IRWXU, .entries = entries};
-	hashmap_set(ctx->dirtable, &dirt);
 
 	ctx->rank = rank;
 	ctx->nprocs = nprocs;
@@ -713,6 +730,15 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	ctx->i_ino = rank + (nprocs * nthreads);
 	ctx->ucp_worker = worker;
 	ctx->shutdown = shutdown;
+
+	ctx->root.name = "";
+	ctx->root.mode = S_IFDIR | S_IRWXU;
+	ctx->root.chunk_size = 0;
+	ctx->root.i_ino = 0;
+	timespec_get(&ctx->root.mtime, TIME_UTC);
+	timespec_get(&ctx->root.ctime, TIME_UTC);
+	ctx->root.entries = hashmap_new(sizeof(entry_t), 0, 0, 0, entry_hash,
+					entry_compare, NULL, NULL);
 
 	fs_inode_init(db_dir);
 
@@ -808,13 +834,7 @@ int
 fs_server_term(int trank)
 {
 	struct worker_ctx *ctx = &all_ctx[trank];
-	size_t iter = 0;
-	void *item;
-	while (hashmap_iter(ctx->dirtable, &iter, &item)) {
-		const dirtable_t *table = item;
-		hashmap_free(table->entries);
-	}
-	hashmap_free(ctx->dirtable);
+	free_meta_tree(&ctx->root);
 	return (0);
 }
 

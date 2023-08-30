@@ -121,6 +121,12 @@ finchfs_open(const char *path, int32_t flags)
 		fd_table[fd].path = NULL;
 		return (-1);
 	}
+	if (S_ISDIR(st.mode)) {
+		log_error("directory open is not supported");
+		free(fd_table[fd].path);
+		fd_table[fd].path = NULL;
+		return (-1);
+	}
 	fd_table[fd].i_ino = st.i_ino;
 	fd_table[fd].mode = st.mode;
 	fd_table[fd].chunk_size = st.chunk_size;

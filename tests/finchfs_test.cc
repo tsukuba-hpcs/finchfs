@@ -285,10 +285,16 @@ static int
 path_to_target_hash(const char *path, int div)
 {
 	long h = 0;
+	int slash = -1;
 	char *head = strdup(path);
 	char *next;
 	long n;
-	for (char *p = head; *p != '\0'; p = next) {
+	for (int i = 0; head[i] != '\0'; i++) {
+		if (head[i] == '/') {
+			slash = i;
+		}
+	}
+	for (char *p = head + slash + 1; *p != '\0'; p = next) {
 		n = strtol(p, &next, 10);
 		if (next == p) {
 			h += *p;
@@ -303,30 +309,69 @@ path_to_target_hash(const char *path, int div)
 
 TEST(HashTest, Hash)
 {
-	EXPECT_EQ(path_to_target_hash("/foo1", 8), 4);
-	EXPECT_EQ(path_to_target_hash("/foo2", 8), 5);
-	EXPECT_EQ(path_to_target_hash("/foo3", 8), 6);
-	EXPECT_EQ(path_to_target_hash("/foo4", 8), 7);
-	EXPECT_EQ(path_to_target_hash("/foo5", 8), 0);
-	EXPECT_EQ(path_to_target_hash("/foo6", 8), 1);
-	EXPECT_EQ(path_to_target_hash("/foo7", 8), 2);
-	EXPECT_EQ(path_to_target_hash("/foo8", 8), 3);
-	EXPECT_EQ(path_to_target_hash("/foo9", 8), 4);
-	EXPECT_EQ(path_to_target_hash("/foo10", 8), 5);
+	EXPECT_EQ(path_to_target_hash("foo1", 8), 5);
+	EXPECT_EQ(path_to_target_hash("foo2", 8), 6);
+	EXPECT_EQ(path_to_target_hash("foo3", 8), 7);
+	EXPECT_EQ(path_to_target_hash("foo4", 8), 0);
+	EXPECT_EQ(path_to_target_hash("foo5", 8), 1);
+	EXPECT_EQ(path_to_target_hash("foo6", 8), 2);
+	EXPECT_EQ(path_to_target_hash("foo7", 8), 3);
+	EXPECT_EQ(path_to_target_hash("foo8", 8), 4);
+	EXPECT_EQ(path_to_target_hash("foo9", 8), 5);
+	EXPECT_EQ(path_to_target_hash("foo10", 8), 6);
 }
 
 TEST(HashTest, Hash2)
 {
-	EXPECT_EQ(path_to_target_hash("/foo01", 8), 4);
-	EXPECT_EQ(path_to_target_hash("/foo02", 8), 5);
-	EXPECT_EQ(path_to_target_hash("/foo03", 8), 6);
-	EXPECT_EQ(path_to_target_hash("/foo04", 8), 7);
-	EXPECT_EQ(path_to_target_hash("/foo05", 8), 0);
-	EXPECT_EQ(path_to_target_hash("/foo06", 8), 1);
-	EXPECT_EQ(path_to_target_hash("/foo07", 8), 2);
-	EXPECT_EQ(path_to_target_hash("/foo08", 8), 3);
-	EXPECT_EQ(path_to_target_hash("/foo09", 8), 4);
-	EXPECT_EQ(path_to_target_hash("/foo10", 8), 5);
+	EXPECT_EQ(path_to_target_hash("foo01", 8), 5);
+	EXPECT_EQ(path_to_target_hash("foo02", 8), 6);
+	EXPECT_EQ(path_to_target_hash("foo03", 8), 7);
+	EXPECT_EQ(path_to_target_hash("foo04", 8), 0);
+	EXPECT_EQ(path_to_target_hash("foo05", 8), 1);
+	EXPECT_EQ(path_to_target_hash("foo06", 8), 2);
+	EXPECT_EQ(path_to_target_hash("foo07", 8), 3);
+	EXPECT_EQ(path_to_target_hash("foo08", 8), 4);
+	EXPECT_EQ(path_to_target_hash("foo09", 8), 5);
+	EXPECT_EQ(path_to_target_hash("foo10", 8), 6);
+}
+
+TEST(HashTest, Hash3)
+{
+	EXPECT_EQ(path_to_target_hash("bar/foo01", 8), 5);
+	EXPECT_EQ(path_to_target_hash("bar/foo02", 8), 6);
+	EXPECT_EQ(path_to_target_hash("bar/foo03", 8), 7);
+	EXPECT_EQ(path_to_target_hash("bar/foo04", 8), 0);
+	EXPECT_EQ(path_to_target_hash("bar/foo05", 8), 1);
+	EXPECT_EQ(path_to_target_hash("bar/foo06", 8), 2);
+	EXPECT_EQ(path_to_target_hash("bar/foo07", 8), 3);
+	EXPECT_EQ(path_to_target_hash("bar/foo08", 8), 4);
+	EXPECT_EQ(path_to_target_hash("bar/foo09", 8), 5);
+	EXPECT_EQ(path_to_target_hash("bar/foo10", 8), 6);
+}
+
+static void
+get_parent_and_filename(char *filename, const char *path)
+{
+	char *prev = (char *)path;
+	char *p = prev;
+	int path_len = strlen(path) + 1;
+	char name[128];
+	while ((p = strchr(p, '/')) != NULL) {
+		memcpy(name, prev, p - prev);
+		name[p - prev] = '\0';
+		prev = ++p;
+	}
+	memcpy(filename, prev, path_len - (prev - path));
+	filename[path_len - (prev - path)] = '\0';
+}
+
+TEST(HashTest, DIG_DIR)
+{
+	char filename[128];
+	get_parent_and_filename(filename, "foo/bar/baz");
+	EXPECT_STREQ(filename, "baz");
+	get_parent_and_filename(filename, "foo");
+	EXPECT_STREQ(filename, "foo");
 }
 
 int
