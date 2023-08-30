@@ -330,6 +330,16 @@ finchfs_mkdir(const char *path, mode_t mode)
 }
 
 int
+finchfs_rmdir(const char *path)
+{
+	int ret;
+	char *p = canonical_path(path);
+	ret = fs_rpc_inode_unlink_all(p);
+	free(p);
+	return (ret);
+}
+
+int
 finchfs_rename(const char *oldpath, const char *newpath)
 {
 	int ret;

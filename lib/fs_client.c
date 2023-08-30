@@ -428,13 +428,13 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 	iov[2].buffer = &mode;
 	iov[2].length = sizeof(mode);
 
-	int *rets = malloc(sizeof(int) * env.nvprocs);
+	int *ret = malloc(sizeof(int) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
-		rets[i] = FINCH_INPROGRESS;
+		ret[i] = FINCH_INPROGRESS;
 	}
 	int **rets_addr = malloc(sizeof(int *) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
-		rets_addr[i] = &rets[i];
+		rets_addr[i] = &ret[i];
 	}
 
 	ucp_request_param_t rparam = {
@@ -444,49 +444,68 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 	    .datatype = UCP_DATATYPE_IOV,
 	};
 
-	ucs_status_ptr_t *req = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
+	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
-		req[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_MKDIR_REQ,
-					 &rets_addr[i], sizeof(void *), iov, 3,
-					 &rparam);
+		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_MKDIR_REQ,
+					  &rets_addr[i], sizeof(void *), iov, 3,
+					  &rparam);
 	}
 
 	ucs_status_t status;
-	while (!all_req_finish(req, env.nvprocs)) {
+	while (!all_req_finish(reqs, env.nvprocs)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
+	int nokreq = 0;
+	int *okidx = malloc(sizeof(int) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
-		if (req[i] == NULL) {
+		if (reqs[i] == NULL) {
+			okidx[nokreq++] = i;
 			continue;
 		}
-		status = ucp_request_check_status(req[i]);
+		status = ucp_request_check_status(reqs[i]);
 		if (status != UCS_OK) {
 			log_error(
 			    "fs_rpc_mkdir: ucp_am_send_nbx() failed at %d: %s",
 			    i, ucs_status_string(status));
 			return (-1);
+		} else {
+			okidx[nokreq++] = i;
 		}
-		ucp_request_free(req[i]);
+		ucp_request_free(reqs[i]);
 	}
-	free(req);
-	log_debug("fs_rpc_mkdir: ucp_am_send_nbx() succeeded");
-
-	while (!all_ret_finish(rets_addr, env.nvprocs)) {
+	if (nokreq < env.nvprocs) {
+		log_error("fs_rpc_mkdir: ucp_am_send_nbx() failed");
+	} else {
+		log_debug("fs_rpc_mkdir: ucp_am_send_nbx() succeeded");
+	}
+	free(reqs);
+	int **rets = malloc(sizeof(int *) * nokreq);
+	for (int i = 0; i < nokreq; i++) {
+		rets[i] = &ret[okidx[i]];
+	}
+	while (!all_ret_finish(rets, nokreq)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
+	free(rets);
 	free(rets_addr);
+	if (nokreq < env.nvprocs) {
+		free(ret);
+		log_error("fs_rpc_mkdir: mkdir() failed nokreq=%d nreqs=%d",
+			  nokreq, env.nvprocs);
+		return (-1);
+	}
+	int r = 0;
 	for (int i = 0; i < env.nvprocs; i++) {
-		if (rets[i] != FINCH_OK) {
+		if (ret[i] != FINCH_OK) {
 			log_error("fs_rpc_mkdir: mkdir() failed at %d: %s", i,
-				  strerror(-rets[i]));
-			errno = -rets[i];
-			free(rets);
-			return (-1);
+				  strerror(-ret[i]));
+			errno = -ret[i];
+			r = -1;
 		}
 	}
-	free(rets);
+	free(ret);
 	log_debug("fs_rpc_mkdir: succeeded");
-	return (0);
+	return (r);
 }
 
 int
@@ -612,6 +631,93 @@ fs_rpc_inode_unlink(const char *path, uint32_t *i_ino)
 	log_debug("fs_rpc_inode_unlink: succeeded ino=%d", handle.i_ino);
 	*i_ino = handle.i_ino;
 	return (0);
+}
+
+int
+fs_rpc_inode_unlink_all(const char *path)
+{
+	int path_len = strlen(path) + 1;
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = &path_len;
+	iov[0].length = sizeof(path_len);
+	iov[1].buffer = (void *)path;
+	iov[1].length = path_len;
+
+	inode_create_handle_t **handles =
+	    malloc(sizeof(inode_create_handle_t *) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		handles[i] = malloc(sizeof(inode_create_handle_t));
+		handles[i]->ret = FINCH_INPROGRESS;
+		handles[i]->i_ino = 0;
+	}
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_INODE_UNLINK_REQ,
+					  &handles[i], sizeof(handles[i]), iov,
+					  2, &rparam);
+	}
+	while (!all_req_finish(reqs, env.nvprocs)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	int nokreq = 0;
+	int *okidx = malloc(sizeof(int) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		if (reqs[i] == NULL) {
+			okidx[nokreq++] = i;
+			continue;
+		}
+		ucs_status_t status = ucp_request_check_status(reqs[i]);
+		if (status != UCS_OK) {
+			log_error("fs_rpc_inode_unlink_all: ucp_am_send_nbx() "
+				  "failed: %s",
+				  ucs_status_string(status));
+			return (-1);
+		} else {
+			okidx[nokreq++] = i;
+		}
+		ucp_request_free(reqs[i]);
+	}
+	free(reqs);
+	int **rets = malloc(sizeof(int *) * nokreq);
+	for (int i = 0; i < nokreq; i++) {
+		rets[i] = &handles[okidx[i]]->ret;
+	}
+	while (!all_ret_finish(rets, nokreq)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	free(okidx);
+	free(rets);
+	if (nokreq < env.nvprocs) {
+		for (int i = 0; i < env.nvprocs; i++) {
+			free(handles[i]);
+		}
+		free(handles);
+		log_error("fs_rpc_inode_unlink_all: ucp_am_send_nbx() failed"
+			  "nokreq=%d nreqs=%d",
+			  nokreq, env.nvprocs);
+		return (-1);
+	}
+	int ret = 0;
+	for (int i = 0; i < env.nvprocs; i++) {
+		if (handles[i]->ret != FINCH_OK) {
+			log_error("fs_rpc_inode_unlink_all: unlink() failed: "
+				  "%s",
+				  strerror(-handles[i]->ret));
+			errno = -handles[i]->ret;
+			free(handles[i]);
+			ret = -1;
+		}
+	}
+	free(handles);
+	return (ret);
 }
 
 int
@@ -744,9 +850,11 @@ fs_async_rpc_inode_write_wait(void **hdles, int nreqs)
 	if (nokreq < nreqs) {
 		log_error(
 		    "fs_async_rpc_inode_write_wait: ucp_am_send_nbx() failed");
+	} else {
+		log_debug("fs_async_rpc_inode_write_wait: ucp_am_send_nbx() "
+			  "succeeded");
 	}
-	log_debug("fs_async_rpc_inode_write_wait: ucp_am_send_nbx() "
-		  "succeeded");
+
 	free(reqs);
 	int **rets = malloc(sizeof(int *) * nokreq);
 	for (int i = 0; i < nokreq; i++) {

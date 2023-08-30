@@ -258,6 +258,20 @@ TEST(FinchfsTest, Mkdir3)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Rmdir)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/rmdir1", S_IRWXU), 0);
+	int fd;
+	fd = finchfs_create("/rmdir1/file1", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_rmdir("/rmdir1"), 0);
+	fd = finchfs_open("/rmdir1/file1", 0);
+	EXPECT_EQ(fd, -1);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 TEST(FinchfsTest, Rename)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);

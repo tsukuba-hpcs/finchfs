@@ -21,6 +21,7 @@ void *fs_async_rpc_inode_read(uint32_t i_ino, uint32_t index, off_t offset,
 			      size_t size, void *buf);
 ssize_t fs_async_rpc_inode_read_wait(void **hdles, int nreqs);
 int fs_rpc_inode_unlink(const char *path, uint32_t *i_ino);
+int fs_rpc_inode_unlink_all(const char *path);
 
 int fs_client_init(char *addrfile);
 int fs_client_term(void);
