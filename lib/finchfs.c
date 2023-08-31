@@ -97,6 +97,16 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 		fd_table[fd].path = NULL;
 		return (-1);
 	}
+	uint32_t index = 0;
+	while (ret == 0) {
+		ret = fs_rpc_inode_truncate(fd_table[fd].i_ino, index, 0);
+		index++;
+	}
+	if (errno != ENOENT) {
+		free(fd_table[fd].path);
+		fd_table[fd].path = NULL;
+		return (-1);
+	}
 	return (fd);
 }
 
@@ -319,6 +329,44 @@ finchfs_read(int fd, void *buf, size_t size)
 }
 
 int
+finchfs_truncate(const char *path, off_t len)
+{
+	log_debug("finchfs_truncate() called path=%s len=%d", path, len);
+	int ret;
+	fs_stat_t st;
+	char *p = canonical_path(path);
+	ret = fs_rpc_inode_stat(p, &st);
+	free(p);
+	if (ret) {
+		return (-1);
+	}
+	uint32_t index = 0;
+	while ((index + 1) * st.chunk_size <= len) {
+		ret = fs_rpc_inode_truncate(st.i_ino, index, st.chunk_size);
+		index++;
+		if (ret) {
+			return (-1);
+		}
+	}
+	ret = fs_rpc_inode_truncate(st.i_ino, index, len % st.chunk_size);
+	if (ret) {
+		return (-1);
+	}
+	index++;
+	while (1) {
+		ret = fs_rpc_inode_truncate(st.i_ino, index, 0);
+		if (ret && errno == ENOENT) {
+			ret = 0;
+			break;
+		} else if (ret) {
+			return (-1);
+		}
+		index++;
+	}
+	return (ret);
+}
+
+int
 finchfs_unlink(const char *path)
 {
 	log_debug("finchfs_unlink() called path=%s", path);
@@ -425,7 +473,6 @@ finchfs_rename(const char *oldpath, const char *newpath)
 		return (-1);
 	}
 	if (S_ISDIR(st.mode)) {
-		int ret;
 		ret = fs_rpc_dir_move(oldp, newp);
 		free(oldp);
 		free(newp);

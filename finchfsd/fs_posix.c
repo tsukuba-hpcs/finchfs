@@ -98,3 +98,30 @@ fs_inode_chunk_stat(uint32_t i_ino, uint32_t index, size_t *size)
 	*size = (size_t)st.st_size;
 	return (0);
 }
+
+int
+fs_inode_truncate(uint32_t i_ino, uint32_t index, off_t offset)
+{
+	log_debug("fs_inode_truncate() called i_ino=%u index=%u", i_ino, index);
+	char buffer[128];
+	snprintf(buffer, sizeof(buffer), "%u.%u", i_ino, index);
+	int ret;
+	if (offset == 0) {
+		ret = unlink(buffer);
+	} else {
+		int fd;
+		fd = open(buffer, O_WRONLY | O_CREAT, 0644);
+		if (fd < 0) {
+			ret = -1;
+		} else {
+			ret = ftruncate(fd, offset);
+			close(fd);
+		}
+	}
+	if (ret < 0) {
+		log_error("fs_inode_truncate truncate() failed: %s",
+			  strerror(errno));
+		return (-1);
+	}
+	return (0);
+}

@@ -800,14 +800,82 @@ fs_rpc_inode_stat(const char *path, fs_stat_t *st)
 		ucp_worker_progress(env.ucp_worker);
 	}
 	if (handle.ret != FINCH_OK) {
-		log_error("fs_rpc_inode_stat: stat() failed: %s",
-			  strerror(-handle.ret));
+		if (handle.ret != FINCH_ENOENT) {
+			log_error("fs_rpc_inode_stat: stat() failed: %s",
+				  strerror(-handle.ret));
+		} else {
+			log_debug("fs_rpc_inode_stat: stat() failed with "
+				  "ENOENT");
+		}
 		errno = -handle.ret;
 		return (-1);
 	}
 	*st = handle.st;
 	log_debug("fs_rpc_inode_stat: succeeded ino=%zu chunksize=%zu",
 		  st->i_ino, st->chunk_size);
+	return (0);
+}
+
+int
+fs_rpc_inode_truncate(uint32_t i_ino, uint32_t index, off_t offset)
+{
+	int target = (i_ino + index) % env.nvprocs;
+	ucp_dt_iov_t iov[3];
+	iov[0].buffer = &i_ino;
+	iov[0].length = sizeof(i_ino);
+	iov[1].buffer = &index;
+	iov[1].length = sizeof(index);
+	iov[2].buffer = &offset;
+	iov[2].length = sizeof(offset);
+
+	int ret = FINCH_INPROGRESS;
+	int *ret_addr = &ret;
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t req;
+	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_TRUNCATE_REQ,
+			      &ret_addr, sizeof(void *), iov, 3, &rparam);
+
+	ucs_status_t status;
+	while (!all_req_finish(&req, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (req != NULL) {
+		status = ucp_request_check_status(req);
+		if (status != UCS_OK) {
+			log_error(
+			    "fs_rpc_inode_truncate: ucp_am_send_nbx() failed: "
+			    "%s",
+			    ucs_status_string(status));
+			errno = EIO;
+			return (-1);
+		}
+		ucp_request_free(req);
+	}
+
+	log_debug("fs_rpc_inode_truncate: ucp_am_send_nbx() succeeded");
+	while (!all_ret_finish(&ret_addr, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (ret != FINCH_OK) {
+		if (ret != FINCH_ENOENT) {
+			log_error(
+			    "fs_rpc_inode_truncate: truncate() failed: %s",
+			    strerror(-ret));
+		} else {
+			log_debug("fs_rpc_inode_truncate: truncate() failed "
+				  "with ENOENT");
+		}
+		errno = -ret;
+		return (-1);
+	}
+	log_debug("fs_rpc_inode_truncate: succeeded");
 	return (0);
 }
 
@@ -858,8 +926,16 @@ fs_rpc_inode_chunk_stat(uint32_t i_ino, uint32_t index, size_t *size)
 		ucp_worker_progress(env.ucp_worker);
 	}
 	if (handle.ret != FINCH_OK) {
-		log_error("fs_rpc_inode_chunk_stat: stat(index=%zu) failed: %s",
-			  index, strerror(-handle.ret));
+		if (handle.ret != FINCH_ENOENT) {
+			log_error("fs_rpc_inode_chunk_stat: stat(index=%zu) "
+				  "failed: %s",
+				  index, strerror(-handle.ret));
+		} else {
+			log_debug(
+			    "fs_rpc_inode_chunk_stat: stat(index=%zu) failed "
+			    "with ENOENT",
+			    index);
+		}
 		errno = -handle.ret;
 		return (-1);
 	}
@@ -1155,7 +1231,6 @@ fs_rpc_dir_move(const char *oldpath, const char *newpath)
 			log_error("fs_rpc_dir_move: ucp_am_send_nbx() failed "
 				  "at %d: %s",
 				  i, ucs_status_string(status));
-			return (-1);
 		} else {
 			okidx[nokreq++] = i;
 		}

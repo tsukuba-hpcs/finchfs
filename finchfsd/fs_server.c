@@ -299,11 +299,21 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
 		log_debug("fs_rpc_inode_create_recv() create path=%s", path);
+		uint32_t ni_ino = i_ino;
+		if (i_ino == 0) {
+			entry_t key = {.name = filename};
+			entry_t *ent = hashmap_get(parent->entries, &key);
+			if (ent != NULL) {
+				ni_ino = ent->i_ino;
+			} else {
+				ni_ino = alloc_ino(ctx);
+			}
+		}
 		entry_t newent = {
 		    .name = strdup(filename),
 		    .mode = mode,
 		    .chunk_size = chunk_size,
-		    .i_ino = (i_ino == 0) ? alloc_ino(ctx) : i_ino,
+		    .i_ino = ni_ino,
 		    .entries = NULL,
 		};
 		timespec_get(&newent.mtime, TIME_UTC);
@@ -568,6 +578,77 @@ fs_rpc_inode_chunk_stat_recv(void *arg, const void *header,
 	    param->reply_ep, RPC_INODE_CHUNK_STAT_REP, user_data->header,
 	    header_length, user_data->iov, user_data->n, &rparam);
 
+	if (req == NULL) {
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+	} else if (UCS_PTR_IS_ERR(req)) {
+		log_error("ucp_am_send_nbx() failed: %s",
+			  ucs_status_string(UCS_PTR_STATUS(req)));
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+		ucs_status_t status = UCS_PTR_STATUS(req);
+		ucp_request_free(req);
+		return (status);
+	}
+	return (UCS_OK);
+}
+
+ucs_status_t
+fs_rpc_inode_truncate_recv(void *arg, const void *header, size_t header_length,
+			   void *data, size_t length,
+			   const ucp_am_recv_param_t *param)
+{
+	uint32_t i_ino;
+	uint32_t index;
+	off_t off;
+	size_t offset = 0;
+	i_ino = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(i_ino);
+	index = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(index);
+	off = *(off_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+
+	log_debug(
+	    "fs_rpc_inode_truncate_recv() called i_ino=%ld index=%d off=%d",
+	    i_ino, index, off);
+
+	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	user_data->n = 1;
+	user_data->iov[0].buffer = malloc(sizeof(int));
+	user_data->iov[0].length = sizeof(int);
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
+		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
+	    .cb =
+		{
+		    .send = fs_rpc_iov_reply_cb,
+		},
+	    .flags = UCP_AM_SEND_FLAG_EAGER,
+	    .datatype = UCP_DATATYPE_IOV,
+	    .user_data = user_data,
+	};
+	int ret;
+	ret = fs_inode_truncate(i_ino, index, off);
+	if (ret < 0) {
+		log_debug("fs_rpc_inode_truncate_recv(): i_ino=%ld index=%d %s",
+			  i_ino, index, strerror(errno));
+		*(int *)(user_data->iov[0].buffer) = -errno;
+	} else {
+		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+	}
+	ucs_status_ptr_t req = ucp_am_send_nbx(
+	    param->reply_ep, RPC_RET_REP, user_data->header, header_length,
+	    user_data->iov, user_data->n, &rparam);
 	if (req == NULL) {
 		free(user_data->header);
 		for (int i = 0; i < user_data->n; i++) {
@@ -1035,6 +1116,21 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
 		 worker, &chunk_stat_param)) != UCS_OK) {
+		log_error(
+		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
+		    ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t inode_truncate_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_INODE_TRUNCATE_REQ,
+	    .cb = fs_rpc_inode_truncate_recv,
+	    .arg = ctx,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 worker, &inode_truncate_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
 		    ucs_status_string(status));

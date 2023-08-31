@@ -222,7 +222,7 @@ TEST(FinchfsTest, Read3)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
-TEST(FinchfsTest, UNLINK)
+TEST(FinchfsTest, Unlink)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
@@ -345,6 +345,73 @@ TEST(FinchfsTest, Stat2)
 	struct stat st;
 	EXPECT_EQ(finchfs_stat("/stat2", &st), 0);
 	EXPECT_EQ(st.st_size, sizeof(buf));
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Trunc)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	char buf[1000];
+	rnd_fill(buf, sizeof(buf));
+	fd = finchfs_create_chunk_size("/trunc1", 0, S_IRWXU, 128);
+	EXPECT_EQ(fd, 0);
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	finchfs_close(fd);
+	struct stat st;
+	EXPECT_EQ(finchfs_stat("/trunc1", &st), 0);
+	EXPECT_EQ(st.st_size, sizeof(buf));
+	fd = finchfs_create_chunk_size("/trunc1", 0, S_IRWXU, 128);
+	EXPECT_EQ(fd, 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_stat("/trunc1", &st), 0);
+	EXPECT_EQ(st.st_size, 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Trunc2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	char buf[1000];
+	rnd_fill(buf, sizeof(buf));
+	fd = finchfs_create_chunk_size("/trunc2", 0, S_IRWXU, 128);
+	EXPECT_EQ(fd, 0);
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	finchfs_close(fd);
+	struct stat st;
+	EXPECT_EQ(finchfs_stat("/trunc2", &st), 0);
+	EXPECT_EQ(st.st_size, sizeof(buf));
+	EXPECT_EQ(finchfs_truncate("/trunc2", 500), 0);
+	EXPECT_EQ(finchfs_stat("/trunc2", &st), 0);
+	EXPECT_EQ(st.st_size, 500);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, SingleSharedFile)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd1;
+	char buf1[1000];
+	int fd2;
+	char buf2[1000];
+	fd1 = finchfs_create("/single_shared", 0, S_IRWXU);
+	EXPECT_EQ(fd1, 0);
+	fd2 = finchfs_create("/single_shared", 0, S_IRWXU);
+	EXPECT_EQ(fd2, 1);
+	ssize_t n;
+	rnd_fill(buf1, sizeof(buf1));
+	n = finchfs_write(fd1, buf1, sizeof(buf1));
+	EXPECT_EQ(n, sizeof(buf1));
+	n = finchfs_read(fd2, buf2, sizeof(buf2));
+	EXPECT_EQ(n, sizeof(buf2));
+	EXPECT_TRUE(memcmp(buf1, buf2, sizeof(buf2)) == 0);
+	finchfs_close(fd1);
+	finchfs_close(fd2);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
