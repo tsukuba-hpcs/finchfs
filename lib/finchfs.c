@@ -29,13 +29,6 @@ finchfs_init(const char *addrfile)
 {
 	char *log_level;
 	char *chunk_size;
-	if (fs_client_init((char *)addrfile)) {
-		return (-1);
-	}
-	fd_table = malloc(sizeof(struct fd_table) * fd_table_size);
-	for (int i = 0; i < fd_table_size; ++i) {
-		fd_table[i].path = NULL;
-	}
 	log_level = getenv("FINCHFS_LOG_LEVEL");
 	if (!IS_NULL_STRING(log_level)) {
 		log_set_level(log_level);
@@ -43,6 +36,13 @@ finchfs_init(const char *addrfile)
 	chunk_size = getenv("FINCHFS_CHUNK_SIZE");
 	if (!IS_NULL_STRING(chunk_size)) {
 		finchfs_chunk_size = strtoul(chunk_size, NULL, 10);
+	}
+	if (fs_client_init((char *)addrfile)) {
+		return (-1);
+	}
+	fd_table = malloc(sizeof(struct fd_table) * fd_table_size);
+	for (int i = 0; i < fd_table_size; ++i) {
+		fd_table[i].path = NULL;
 	}
 	return 0;
 }
