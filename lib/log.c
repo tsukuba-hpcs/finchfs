@@ -148,3 +148,9 @@ log_set_level(const char *level)
 		}
 	}
 }
+
+int
+get_log_priority(void)
+{
+	return log_prio;
+}

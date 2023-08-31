@@ -5,6 +5,7 @@
 #include <string.h>
 #include <errno.h>
 #include <ucp/api/ucp.h>
+#include <syslog.h>
 #include "finchfs.h"
 #include "config.h"
 #include "log.h"
@@ -269,6 +270,10 @@ fs_client_init(char *addrfile)
 			log_error("ucp_ep_create() failed: %s",
 				  ucs_status_string(status));
 			return (-1);
+		}
+		if (get_log_priority() == LOG_DEBUG) {
+			log_debug("ucp_ep[%d]:", i);
+			ucp_ep_print_info(env.ucp_eps[i], stderr);
 		}
 	}
 
