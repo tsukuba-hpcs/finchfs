@@ -97,16 +97,6 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 		fd_table[fd].path = NULL;
 		return (-1);
 	}
-	uint32_t index = 0;
-	while (ret == 0) {
-		ret = fs_rpc_inode_truncate(fd_table[fd].i_ino, index, 0);
-		index++;
-	}
-	if (errno != ENOENT) {
-		free(fd_table[fd].path);
-		fd_table[fd].path = NULL;
-		return (-1);
-	}
 	return (fd);
 }
 

@@ -363,31 +363,8 @@ TEST(FinchfsTest, Trunc)
 	struct stat st;
 	EXPECT_EQ(finchfs_stat("/trunc1", &st), 0);
 	EXPECT_EQ(st.st_size, sizeof(buf));
-	fd = finchfs_create_chunk_size("/trunc1", 0, S_IRWXU, 128);
-	EXPECT_EQ(fd, 0);
-	finchfs_close(fd);
+	EXPECT_EQ(finchfs_truncate("/trunc1", 500), 0);
 	EXPECT_EQ(finchfs_stat("/trunc1", &st), 0);
-	EXPECT_EQ(st.st_size, 0);
-	EXPECT_EQ(finchfs_term(), 0);
-}
-
-TEST(FinchfsTest, Trunc2)
-{
-	EXPECT_EQ(finchfs_init(NULL), 0);
-	int fd;
-	char buf[1000];
-	rnd_fill(buf, sizeof(buf));
-	fd = finchfs_create_chunk_size("/trunc2", 0, S_IRWXU, 128);
-	EXPECT_EQ(fd, 0);
-	ssize_t n;
-	n = finchfs_write(fd, buf, sizeof(buf));
-	EXPECT_EQ(n, sizeof(buf));
-	finchfs_close(fd);
-	struct stat st;
-	EXPECT_EQ(finchfs_stat("/trunc2", &st), 0);
-	EXPECT_EQ(st.st_size, sizeof(buf));
-	EXPECT_EQ(finchfs_truncate("/trunc2", 500), 0);
-	EXPECT_EQ(finchfs_stat("/trunc2", &st), 0);
 	EXPECT_EQ(st.st_size, 500);
 	EXPECT_EQ(finchfs_term(), 0);
 }
