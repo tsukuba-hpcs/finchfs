@@ -91,8 +91,12 @@ fs_inode_chunk_stat(uint32_t i_ino, uint32_t index, size_t *size)
 	int ret;
 	ret = stat(buffer, &st);
 	if (ret < 0) {
-		log_error("fs_inode_chunk_stat stat() failed: %s",
-			  strerror(errno));
+		if (errno == ENOENT) {
+			log_debug("fs_inode_chunk_stat stat() failed: ENOENT");
+		} else {
+			log_error("fs_inode_chunk_stat stat() failed: %s",
+				  strerror(errno));
+		}
 		return (-1);
 	}
 	*size = (size_t)st.st_size;
