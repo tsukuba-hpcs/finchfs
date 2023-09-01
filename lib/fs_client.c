@@ -6,6 +6,8 @@
 #include <errno.h>
 #include <ucp/api/ucp.h>
 #include <syslog.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include "finchfs.h"
 #include "config.h"
 #include "log.h"
@@ -186,6 +188,54 @@ fs_rpc_inode_read_reply(void *arg, const void *header, size_t header_length,
 	return (UCS_OK);
 }
 
+typedef struct {
+	int ret;
+	void *arg;
+	void (*filler)(void *, const char *, const struct stat *);
+	readdir_header_t header;
+} readdir_handle_t;
+
+ucs_status_t
+fs_rpc_readdir_reply(void *arg, const void *header, size_t header_length,
+		     void *data, size_t length,
+		     const ucp_am_recv_param_t *param)
+{
+	readdir_header_t *hdr = (readdir_header_t *)header;
+	readdir_handle_t *handle = hdr->handle;
+	log_debug("fs_rpc_readdir_reply: entry_count=%d", hdr->entry_count);
+	size_t offset = 0;
+	if (hdr->ret == FINCH_OK || hdr->ret == FINCH_INPROGRESS) {
+		for (int i = 0; i < hdr->entry_count; i++) {
+			readdir_entry_t *ent =
+			    (readdir_entry_t *)UCS_PTR_BYTE_OFFSET(data,
+								   offset);
+			offset += sizeof(readdir_entry_t) + ent->path_len;
+			struct stat st;
+			st.st_mode = ent->mode;
+			st.st_uid = getuid();
+			st.st_gid = getgid();
+			st.st_size = -1;
+			st.st_mtim = ent->mtime;
+			st.st_ctim = ent->ctime;
+			st.st_nlink = 1;
+			st.st_ino = ent->i_ino;
+			st.st_blksize = ent->chunk_size;
+			st.st_blocks = 0;
+
+			handle->filler(handle->arg, ent->path, &st);
+		}
+	}
+	if (hdr->ret == FINCH_OK) {
+		log_debug("fs_rpc_readdir_reply: finished");
+	} else if (hdr->ret == FINCH_INPROGRESS) {
+		log_debug("fs_rpc_readdir_reply: inprogress");
+	} else {
+		log_debug("fs_rpc_readdir_reply: error");
+	}
+	handle->ret = hdr->ret;
+	return (UCS_OK);
+}
+
 static void
 ep_err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 {
@@ -363,6 +413,20 @@ fs_client_init(char *addrfile)
 		log_error(
 		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
 		    ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t readdir_reply_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_READDIR_REP,
+	    .cb = fs_rpc_readdir_reply,
+	    .arg = NULL,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 env.ucp_worker, &readdir_reply_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(readdir) failed: %s",
+			  ucs_status_string(status));
 		return (-1);
 	}
 	return (0);
@@ -1139,9 +1203,10 @@ fs_async_rpc_inode_read_wait(void **hdles, int nreqs)
 	if (nokreq < nreqs) {
 		log_error(
 		    "fs_async_rpc_inode_read_wait: ucp_am_send_nbx() failed");
+	} else {
+		log_debug("fs_async_rpc_inode_read_wait: ucp_am_send_nbx() "
+			  "succeeded");
 	}
-	log_debug("fs_async_rpc_inode_read_wait: ucp_am_send_nbx() "
-		  "succeeded");
 	free(reqs);
 	int **rets = malloc(sizeof(int *) * nokreq);
 	for (int i = 0; i < nokreq; i++) {
@@ -1180,6 +1245,96 @@ fs_async_rpc_inode_read_wait(void **hdles, int nreqs)
 		free(handles[i]);
 	}
 	return (ss);
+}
+
+int
+fs_rpc_readdir(const char *path, void *arg,
+	       void (*filler)(void *, const char *, const struct stat *))
+{
+	int path_len = strlen(path) + 1;
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = &path_len;
+	iov[0].length = sizeof(path_len);
+	iov[1].buffer = (void *)path;
+	iov[1].length = path_len;
+
+	readdir_handle_t *handles =
+	    malloc(sizeof(readdir_handle_t) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		handles[i].ret = FINCH_INPROGRESS;
+		handles[i].arg = arg;
+		handles[i].filler = filler;
+		handles[i].header.handle = &handles[i];
+		handles[i].header.entry_count = 1024;
+		handles[i].header.fileonly = (int)(i > 0);
+	}
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
+
+	for (int i = 0; i < env.nvprocs; i++) {
+		reqs[i] = ucp_am_send_nbx(
+		    env.ucp_eps[i], RPC_READDIR_REQ, &handles[i].header,
+		    sizeof(handles[i].header), iov, 2, &rparam);
+	}
+	while (!all_req_finish(reqs, env.nvprocs)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	int nokreq = 0;
+	int *okidx = malloc(sizeof(int) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		if (reqs[i] == NULL) {
+			okidx[nokreq++] = i;
+			continue;
+		}
+		ucs_status_t status = ucp_request_check_status(reqs[i]);
+		if (status != UCS_OK) {
+			log_error("fs_rpc_readdir: ucp_am_send_nbx() failed "
+				  "at %d: %s",
+				  i, ucs_status_string(status));
+		} else {
+			okidx[nokreq++] = i;
+		}
+		ucp_request_free(reqs[i]);
+	}
+	if (nokreq < env.nvprocs) {
+		log_error("fs_rpc_readdir: ucp_am_send_nbx() failed");
+	} else {
+		log_debug("fs_rpc_readdir: ucp_am_send_nbx() succeeded");
+	}
+	free(reqs);
+	int **rets = malloc(sizeof(int *) * nokreq);
+	for (int i = 0; i < nokreq; i++) {
+		rets[i] = &handles[okidx[i]].ret;
+	}
+	while (!all_ret_finish(rets, nokreq)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	free(okidx);
+	free(rets);
+	if (nokreq < env.nvprocs) {
+		free(handles);
+		log_error("fs_rpc_readdir_wait failed nokreq=%d nreqs=%d",
+			  nokreq, env.nvprocs);
+		return (-1);
+	}
+	int r = 0;
+	for (int i = 0; i < env.nvprocs; i++) {
+		if (handles[i].ret != FINCH_OK) {
+			log_error("fs_rpc_readdir: readdir() failed at %d: %s",
+				  i, strerror(-handles[i].ret));
+			errno = -handles[i].ret;
+			r = -1;
+		}
+	}
+	free(handles);
+	return (r);
 }
 
 int

@@ -392,6 +392,72 @@ TEST(FinchfsTest, SingleSharedFile)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+static void
+filler1(void *arg, const char *path, const struct stat *st)
+{
+	int *filler1_called = (int *)arg;
+	EXPECT_STREQ(path, "file1");
+	*filler1_called = *filler1_called + 1;
+}
+
+TEST(FinchfsTest, Readdir)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/readdir1", S_IRWXU), 0);
+	int fd;
+	fd = finchfs_create("/readdir1/file1", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	finchfs_close(fd);
+	int filler1_called = 0;
+	EXPECT_EQ(finchfs_readdir("/readdir1", &filler1_called, filler1), 0);
+	EXPECT_EQ(filler1_called, 1);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+static void
+filler2(void *arg, const char *path, const struct stat *st)
+{
+	int *filler2_called = (int *)arg;
+	EXPECT_STREQ(path, "dir");
+	*filler2_called = *filler2_called + 1;
+}
+
+TEST(FinchfsTest, Readdir2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/readdir2", S_IRWXU), 0);
+	EXPECT_EQ(finchfs_mkdir("/readdir2/dir", S_IRWXU), 0);
+	int filler2_called = 0;
+	EXPECT_EQ(finchfs_readdir("/readdir2", &filler2_called, filler2), 0);
+	EXPECT_EQ(filler2_called, 1);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+static void
+filler3(void *arg, const char *path, const struct stat *st)
+{
+	int *filler3_called = (int *)arg;
+	*filler3_called = *filler3_called + 1;
+}
+
+TEST(FinchfsTest, Readdir3)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/readdir3", S_IRWXU), 0);
+	for (int i = 0; i < 10000; i++) {
+		char path[128];
+		sprintf(path, "/readdir3/%d", i);
+		int fd;
+		fd = finchfs_create(path, 0, S_IRWXU);
+		EXPECT_EQ(fd, 0);
+		finchfs_close(fd);
+	}
+	int filler3_called = 0;
+	EXPECT_EQ(finchfs_readdir("/readdir3", &filler3_called, filler3), 0);
+	EXPECT_EQ(filler3_called, 10000);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {

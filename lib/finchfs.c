@@ -448,6 +448,18 @@ finchfs_stat(const char *path, struct stat *st)
 }
 
 int
+finchfs_readdir(const char *path, void *buf,
+		void (*filler)(void *, const char *, const struct stat *))
+{
+	log_debug("finchfs_readdir() called path=%s", path);
+	int ret;
+	char *p = canonical_path(path);
+	ret = fs_rpc_readdir(p, buf, filler);
+	free(p);
+	return (ret);
+}
+
+int
 finchfs_rename(const char *oldpath, const char *newpath)
 {
 	log_debug("finchfs_rename() called oldpath=%s newpath=%s", oldpath,

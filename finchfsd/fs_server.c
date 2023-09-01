@@ -125,6 +125,49 @@ get_parent_and_filename(char *filename, const char *path,
 	return (e);
 }
 
+static entry_t *
+get_dir_entry(const char *path, struct worker_ctx *ctx)
+{
+	entry_t *e = &ctx->root;
+	if (strcmp(path, "") == 0) {
+		return (e);
+	}
+	char *prev = (char *)path;
+	char *p = prev;
+	int path_len = strlen(path) + 1;
+	char name[128];
+	while ((p = strchr(p, '/')) != NULL) {
+		memcpy(name, prev, p - prev);
+		name[p - prev] = '\0';
+		prev = ++p;
+		e = hashmap_get(e->entries, &(entry_t){.name = name});
+		if (e == NULL) {
+			log_error("get_dir() path=%s does not exist", path);
+			errno = ENOENT;
+			return (NULL);
+		}
+		if (!S_ISDIR(e->mode)) {
+			log_error("get_dir() path=%s is not a directory", path);
+			errno = ENOTDIR;
+			return (NULL);
+		}
+	}
+	memcpy(name, prev, path_len - (prev - path));
+	name[path_len - (prev - path)] = '\0';
+	e = hashmap_get(e->entries, &(entry_t){.name = name});
+	if (e == NULL) {
+		log_error("get_dir() path=%s does not exist", path);
+		errno = ENOENT;
+		return (NULL);
+	}
+	if (!S_ISDIR(e->mode)) {
+		log_error("get_dir() path=%s is not a directory", path);
+		errno = ENOTDIR;
+		return (NULL);
+	}
+	return (e);
+}
+
 static void
 fs_rpc_iov_reply_cb(void *request, ucs_status_t status, void *user_data)
 {
@@ -137,6 +180,46 @@ fs_rpc_iov_reply_cb(void *request, ucs_status_t status, void *user_data)
 		free(iov_req->iov[i].buffer);
 	}
 	free(iov_req);
+}
+
+static ucs_status_t
+post_iov_req(ucp_ep_h reply_ep, int id, iov_req_t *user_data,
+	     size_t header_length)
+{
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
+		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
+	    .cb =
+		{
+		    .send = fs_rpc_iov_reply_cb,
+		},
+	    .flags = UCP_AM_SEND_FLAG_EAGER,
+	    .datatype = UCP_DATATYPE_IOV,
+	    .user_data = user_data,
+	};
+	ucs_status_ptr_t req =
+	    ucp_am_send_nbx(reply_ep, id, user_data->header, header_length,
+			    user_data->iov, user_data->n, &rparam);
+	if (req == NULL) {
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+	} else if (UCS_PTR_IS_ERR(req)) {
+		log_error("ucp_am_send_nbx() failed: %s",
+			  ucs_status_string(UCS_PTR_STATUS(req)));
+		free(user_data->header);
+		for (int i = 0; i < user_data->n; i++) {
+			free(user_data->iov[i].buffer);
+		}
+		free(user_data);
+		ucs_status_t status = UCS_PTR_STATUS(req);
+		ucp_request_free(req);
+		return (status);
+	}
+	return (UCS_OK);
 }
 
 static void
@@ -175,18 +258,6 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
 
-	ucp_request_param_t rparam = {
-	    .op_attr_mask =
-		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
-		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
-	    .cb =
-		{
-		    .send = fs_rpc_iov_reply_cb,
-		},
-	    .flags = UCP_AM_SEND_FLAG_EAGER,
-	    .datatype = UCP_DATATYPE_IOV,
-	    .user_data = user_data,
-	};
 	char dirname[128];
 	entry_t *parent = get_parent_and_filename(dirname, path, ctx);
 
@@ -220,28 +291,10 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 		}
 	}
 
-	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_RET_REP, user_data->header, header_length,
-	    user_data->iov, user_data->n, &rparam);
-	if (req == NULL) {
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-	} else if (UCS_PTR_IS_ERR(req)) {
-		log_error("ucp_am_send_nbx() failed: %s",
-			  ucs_status_string(UCS_PTR_STATUS(req)));
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-		ucs_status_t status = UCS_PTR_STATUS(req);
-		ucp_request_free(req);
-		return (status);
-	}
-	return (UCS_OK);
+	ucs_status_t status;
+	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+			      header_length);
+	return (status);
 }
 
 ucs_status_t
@@ -278,19 +331,6 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[1].buffer = malloc(sizeof(uint32_t));
 	user_data->iov[1].length = sizeof(uint32_t);
 
-	ucp_request_param_t rparam = {
-	    .op_attr_mask =
-		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
-		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
-	    .cb =
-		{
-		    .send = fs_rpc_iov_reply_cb,
-		},
-	    .flags = UCP_AM_SEND_FLAG_EAGER,
-	    .datatype = UCP_DATATYPE_IOV,
-	    .user_data = user_data,
-	};
-
 	char filename[128];
 	entry_t *parent = get_parent_and_filename(filename, path, ctx);
 	if (parent == NULL) {
@@ -323,28 +363,10 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		*(uint32_t *)(user_data->iov[1].buffer) = newent.i_ino;
 	}
 
-	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_INODE_REP, user_data->header, header_length,
-	    user_data->iov, user_data->n, &rparam);
-	if (req == NULL) {
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-	} else if (UCS_PTR_IS_ERR(req)) {
-		log_error("ucp_am_send_nbx() failed: %s",
-			  ucs_status_string(UCS_PTR_STATUS(req)));
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-		ucs_status_t status = UCS_PTR_STATUS(req);
-		ucp_request_free(req);
-		return (status);
-	}
-	return (UCS_OK);
+	ucs_status_t status;
+	status = post_iov_req(param->reply_ep, RPC_INODE_REP, user_data,
+			      header_length);
+	return (status);
 }
 
 ucs_status_t
@@ -372,19 +394,6 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[1].buffer = malloc(sizeof(uint32_t));
 	user_data->iov[1].length = sizeof(uint32_t);
 
-	ucp_request_param_t rparam = {
-	    .op_attr_mask =
-		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
-		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
-	    .cb =
-		{
-		    .send = fs_rpc_iov_reply_cb,
-		},
-	    .flags = UCP_AM_SEND_FLAG_EAGER,
-	    .datatype = UCP_DATATYPE_IOV,
-	    .user_data = user_data,
-	};
-
 	char name[128];
 	entry_t *parent = get_parent_and_filename(name, path, ctx);
 	if (parent == NULL) {
@@ -409,29 +418,10 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 		}
 	}
 
-	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_INODE_REP, user_data->header, header_length,
-	    user_data->iov, user_data->n, &rparam);
-
-	if (req == NULL) {
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-	} else if (UCS_PTR_IS_ERR(req)) {
-		log_error("ucp_am_send_nbx() failed: %s",
-			  ucs_status_string(UCS_PTR_STATUS(req)));
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-		ucs_status_t status = UCS_PTR_STATUS(req);
-		ucp_request_free(req);
-		return (status);
-	}
-	return (UCS_OK);
+	ucs_status_t status;
+	status = post_iov_req(param->reply_ep, RPC_INODE_REP, user_data,
+			      header_length);
+	return (status);
 }
 
 ucs_status_t
@@ -460,19 +450,6 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[1].buffer = malloc(sizeof(fs_stat_t));
 	user_data->iov[1].length = sizeof(fs_stat_t);
 
-	ucp_request_param_t rparam = {
-	    .op_attr_mask =
-		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
-		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
-	    .cb =
-		{
-		    .send = fs_rpc_iov_reply_cb,
-		},
-	    .flags = UCP_AM_SEND_FLAG_EAGER,
-	    .datatype = UCP_DATATYPE_IOV,
-	    .user_data = user_data,
-	};
-
 	fs_stat_t *st = (fs_stat_t *)user_data->iov[1].buffer;
 	char name[128];
 	entry_t *parent = get_parent_and_filename(name, path, ctx);
@@ -500,29 +477,10 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 		}
 	}
 
-	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_INODE_STAT_REP, user_data->header,
-	    header_length, user_data->iov, user_data->n, &rparam);
-
-	if (req == NULL) {
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-	} else if (UCS_PTR_IS_ERR(req)) {
-		log_error("ucp_am_send_nbx() failed: %s",
-			  ucs_status_string(UCS_PTR_STATUS(req)));
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-		ucs_status_t status = UCS_PTR_STATUS(req);
-		ucp_request_free(req);
-		return (status);
-	}
-	return (UCS_OK);
+	ucs_status_t status;
+	status = post_iov_req(param->reply_ep, RPC_INODE_STAT_REP, user_data,
+			      header_length);
+	return (status);
 }
 
 ucs_status_t
@@ -551,19 +509,6 @@ fs_rpc_inode_chunk_stat_recv(void *arg, const void *header,
 	user_data->iov[1].buffer = malloc(sizeof(size_t));
 	user_data->iov[1].length = sizeof(size_t);
 
-	ucp_request_param_t rparam = {
-	    .op_attr_mask =
-		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
-		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
-	    .cb =
-		{
-		    .send = fs_rpc_iov_reply_cb,
-		},
-	    .flags = UCP_AM_SEND_FLAG_EAGER,
-	    .datatype = UCP_DATATYPE_IOV,
-	    .user_data = user_data,
-	};
-
 	if (fs_inode_chunk_stat(i_ino, index,
 				(size_t *)user_data->iov[1].buffer)) {
 		log_debug("fs_rpc_inode_chunk_stat_recv() i_ino=%ld index=%d "
@@ -574,29 +519,10 @@ fs_rpc_inode_chunk_stat_recv(void *arg, const void *header,
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 	}
 
-	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_INODE_CHUNK_STAT_REP, user_data->header,
-	    header_length, user_data->iov, user_data->n, &rparam);
-
-	if (req == NULL) {
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-	} else if (UCS_PTR_IS_ERR(req)) {
-		log_error("ucp_am_send_nbx() failed: %s",
-			  ucs_status_string(UCS_PTR_STATUS(req)));
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-		ucs_status_t status = UCS_PTR_STATUS(req);
-		ucp_request_free(req);
-		return (status);
-	}
-	return (UCS_OK);
+	ucs_status_t status;
+	status = post_iov_req(param->reply_ep, RPC_INODE_CHUNK_STAT_REP,
+			      user_data, header_length);
+	return (status);
 }
 
 ucs_status_t
@@ -625,18 +551,6 @@ fs_rpc_inode_truncate_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
 
-	ucp_request_param_t rparam = {
-	    .op_attr_mask =
-		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
-		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
-	    .cb =
-		{
-		    .send = fs_rpc_iov_reply_cb,
-		},
-	    .flags = UCP_AM_SEND_FLAG_EAGER,
-	    .datatype = UCP_DATATYPE_IOV,
-	    .user_data = user_data,
-	};
 	int ret;
 	ret = fs_inode_truncate(i_ino, index, off);
 	if (ret < 0) {
@@ -646,28 +560,11 @@ fs_rpc_inode_truncate_recv(void *arg, const void *header, size_t header_length,
 	} else {
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 	}
-	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_RET_REP, user_data->header, header_length,
-	    user_data->iov, user_data->n, &rparam);
-	if (req == NULL) {
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-	} else if (UCS_PTR_IS_ERR(req)) {
-		log_error("ucp_am_send_nbx() failed: %s",
-			  ucs_status_string(UCS_PTR_STATUS(req)));
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-		ucs_status_t status = UCS_PTR_STATUS(req);
-		ucp_request_free(req);
-		return (status);
-	}
-	return (UCS_OK);
+
+	ucs_status_t status;
+	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+			      header_length);
+	return (status);
 }
 
 static int
@@ -685,19 +582,6 @@ fs_rpc_inode_write_internal(uint32_t i_ino, uint32_t index, off_t offset,
 	user_data->iov[1].buffer = malloc(sizeof(ssize_t));
 	user_data->iov[1].length = sizeof(ssize_t);
 
-	ucp_request_param_t rparam = {
-	    .op_attr_mask =
-		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
-		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
-	    .cb =
-		{
-		    .send = fs_rpc_iov_reply_cb,
-		},
-	    .flags = UCP_AM_SEND_FLAG_EAGER,
-	    .datatype = UCP_DATATYPE_IOV,
-	    .user_data = user_data,
-	};
-
 	*(ssize_t *)user_data->iov[1].buffer =
 	    fs_inode_write(i_ino, index, offset, size, buf);
 	if (*(ssize_t *)user_data->iov[1].buffer < 0) {
@@ -705,25 +589,10 @@ fs_rpc_inode_write_internal(uint32_t i_ino, uint32_t index, off_t offset,
 	} else {
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 	}
-	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    reply_ep, RPC_INODE_WRITE_REP, user_data->header, sizeof(void *),
-	    user_data->iov, user_data->n, &rparam);
-
-	if (req == NULL) {
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-	} else if (UCS_PTR_IS_ERR(req)) {
-		log_error("ucp_am_send_nbx() failed: %s",
-			  ucs_status_string(UCS_PTR_STATUS(req)));
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-		ucp_request_free(req);
+	ucs_status_t status;
+	status = post_iov_req(reply_ep, RPC_INODE_WRITE_REP, user_data,
+			      sizeof(void *));
+	if (status != UCS_OK) {
 		return (1);
 	}
 	return (0);
@@ -869,6 +738,104 @@ fs_rpc_inode_read_recv(void *arg, const void *header, size_t header_length,
 }
 
 ucs_status_t
+fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
+		    void *data, size_t length, const ucp_am_recv_param_t *param)
+{
+	struct worker_ctx *ctx = (struct worker_ctx *)arg;
+	int path_len;
+	char *path;
+	size_t offset = 0;
+	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(path_len);
+	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+	readdir_header_t *hdr = (readdir_header_t *)header;
+
+	log_debug("fs_rpc_readdir_recv() called path=%s count=%d", path,
+		  hdr->entry_count);
+
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * hdr->entry_count);
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	readdir_header_t *rhdr = (readdir_header_t *)user_data->header;
+	rhdr->ret = FINCH_OK;
+	rhdr->entry_count = 0;
+	user_data->n = 0;
+
+	entry_t *dir = get_dir_entry(path, ctx);
+	ucs_status_t status;
+	if (dir == NULL) {
+		if (errno == ENOENT) {
+			log_debug(
+			    "fs_rpc_readdir_recv() path=%s does not exist",
+			    path);
+			rhdr->ret = FINCH_ENOENT;
+		} else {
+			log_debug(
+			    "fs_rpc_readdir_recv() path=%s is not a directory",
+			    path);
+			rhdr->ret = FINCH_ENOTDIR;
+		}
+		user_data->iov[user_data->n].buffer = malloc(1);
+		user_data->iov[user_data->n].length = 1;
+		user_data->n++;
+		status = post_iov_req(param->reply_ep, RPC_READDIR_REP,
+				      user_data, header_length);
+		return (status);
+	}
+	size_t iter = 0;
+	void *item;
+	while (hashmap_iter(dir->entries, &iter, &item)) {
+		entry_t *child = item;
+		if (rhdr->fileonly && S_ISDIR(child->mode)) {
+			continue;
+		}
+		readdir_entry_t *ent =
+		    malloc(sizeof(readdir_entry_t) + strlen(child->name) + 1);
+		ent->chunk_size = child->chunk_size;
+		ent->i_ino = child->i_ino;
+		ent->mode = child->mode;
+		ent->mtime = child->mtime;
+		ent->ctime = child->ctime;
+		ent->path_len = strlen(child->name) + 1;
+		strcpy(ent->path, child->name);
+		user_data->iov[user_data->n].buffer = ent;
+		user_data->iov[user_data->n].length =
+		    sizeof(readdir_entry_t) + ent->path_len;
+		user_data->n++;
+		rhdr->entry_count++;
+		if (user_data->n == hdr->entry_count) {
+			rhdr->ret = FINCH_INPROGRESS;
+			log_debug("fs_rpc_readdir_recv() sending count=%d",
+				  rhdr->entry_count);
+			status = post_iov_req(param->reply_ep, RPC_READDIR_REP,
+					      user_data, header_length);
+			if (status != UCS_OK) {
+				return (status);
+			}
+			user_data =
+			    malloc(sizeof(iov_req_t) +
+				   sizeof(ucp_dt_iov_t) * hdr->entry_count);
+			user_data->header = malloc(header_length);
+			memcpy(user_data->header, header, header_length);
+			rhdr = (readdir_header_t *)user_data->header;
+			rhdr->ret = FINCH_OK;
+			rhdr->entry_count = 0;
+			user_data->n = 0;
+		}
+	}
+	if (user_data->n == 0) {
+		user_data->iov[user_data->n].buffer = malloc(1);
+		user_data->iov[user_data->n].length = 1;
+		user_data->n++;
+	}
+	log_debug("fs_rpc_readdir_recv() sending count=%d", rhdr->entry_count);
+	status = post_iov_req(param->reply_ep, RPC_READDIR_REP, user_data,
+			      header_length);
+	return (status);
+}
+
+ucs_status_t
 fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 		     void *data, size_t length,
 		     const ucp_am_recv_param_t *param)
@@ -897,18 +864,6 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
 
-	ucp_request_param_t rparam = {
-	    .op_attr_mask =
-		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_CALLBACK |
-		UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_USER_DATA,
-	    .cb =
-		{
-		    .send = fs_rpc_iov_reply_cb,
-		},
-	    .flags = UCP_AM_SEND_FLAG_EAGER,
-	    .datatype = UCP_DATATYPE_IOV,
-	    .user_data = user_data,
-	};
 	char odirname[128];
 	char ndirname[128];
 	entry_t *oparent = get_parent_and_filename(odirname, opath, ctx);
@@ -953,28 +908,10 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 		}
 	}
 
-	ucs_status_ptr_t req = ucp_am_send_nbx(
-	    param->reply_ep, RPC_RET_REP, user_data->header, header_length,
-	    user_data->iov, user_data->n, &rparam);
-	if (req == NULL) {
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-	} else if (UCS_PTR_IS_ERR(req)) {
-		log_error("ucp_am_send_nbx() failed: %s",
-			  ucs_status_string(UCS_PTR_STATUS(req)));
-		free(user_data->header);
-		for (int i = 0; i < user_data->n; i++) {
-			free(user_data->iov[i].buffer);
-		}
-		free(user_data);
-		ucs_status_t status = UCS_PTR_STATUS(req);
-		ucp_request_free(req);
-		return (status);
-	}
-	return (UCS_OK);
+	ucs_status_t status;
+	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+			      header_length);
+	return (status);
 }
 
 int
@@ -1131,6 +1068,21 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
 		 worker, &inode_truncate_param)) != UCS_OK) {
+		log_error(
+		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
+		    ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t readdir_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_READDIR_REQ,
+	    .cb = fs_rpc_readdir_recv,
+	    .arg = ctx,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(worker, &readdir_param)) !=
+	    UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
 		    ucs_status_string(status));
