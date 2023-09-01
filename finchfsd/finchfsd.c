@@ -178,6 +178,7 @@ main(int argc, char **argv)
 			  ucs_status_string(status));
 		return (-1);
 	}
+	MPI_Finalize();
 
 	worker_threads = malloc(sizeof(pthread_t) * ctx.nthreads);
 	worker_thread_args = malloc(sizeof(int) * ctx.nthreads);
@@ -203,6 +204,5 @@ main(int argc, char **argv)
 
 	free(worker_threads);
 	free(worker_thread_args);
-	MPI_Finalize();
 	return (0);
 }
