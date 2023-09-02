@@ -52,10 +52,29 @@ struct worker_ctx {
 	int trank;
 	int nthreads;
 	uint32_t i_ino;
+	ucp_context_h ucp_context;
 	ucp_worker_h ucp_worker;
 	int *shutdown;
 	entry_t root;
 } all_ctx[MAX_NTHREADS];
+
+typedef struct {
+	void *header;
+	int n;
+	ucp_dt_iov_t iov[];
+} iov_req_t;
+
+typedef struct {
+	void *header;
+	void *buf;
+} contig_req_t;
+
+typedef struct {
+	void *header;
+	void *buf;
+	size_t size;
+	ucp_ep_h reply_ep;
+} req_rndv_t;
 
 static uint32_t
 alloc_ino(struct worker_ctx *ctx)
@@ -915,8 +934,8 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 }
 
 int
-fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
-	       int trank, int nthreads, int *shutdown)
+fs_server_init(char *db_dir, int rank, int nprocs, int trank, int nthreads,
+	       int *shutdown)
 {
 	if (trank >= MAX_NTHREADS) {
 		log_error("fs_server_init() trank=%d >= MAX_NTHREADS=%d", trank,
@@ -930,7 +949,6 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	ctx->trank = trank;
 	ctx->nthreads = nthreads;
 	ctx->i_ino = rank + (nprocs * nthreads);
-	ctx->ucp_worker = worker;
 	ctx->shutdown = shutdown;
 
 	ctx->root.name = "";
@@ -942,9 +960,26 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	ctx->root.entries = hashmap_new(sizeof(entry_t), 0, 0, 0, entry_hash,
 					entry_compare, NULL, NULL);
 
-	fs_inode_init(db_dir);
-
 	ucs_status_t status;
+	ucp_params_t ucp_params = {
+	    .field_mask = UCP_PARAM_FIELD_FEATURES,
+	    .features = UCP_FEATURE_RMA | UCP_FEATURE_AM,
+	};
+	if ((status = ucp_init(&ucp_params, NULL, &ctx->ucp_context)) !=
+	    UCS_OK) {
+		log_error("ucp_init() failed: %s", ucs_status_string(status));
+		return (-1);
+	}
+	ucp_worker_params_t ucp_worker_params = {
+	    .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
+	    .thread_mode = UCS_THREAD_MODE_SINGLE};
+	if ((status = ucp_worker_create(ctx->ucp_context, &ucp_worker_params,
+					&ctx->ucp_worker)) != UCS_OK) {
+		log_error("ucp_worker_create() failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+
 	ucp_am_handler_param_t mkdir_param = {
 	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
 			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
@@ -953,8 +988,8 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	    .cb = fs_rpc_mkdir_recv,
 	    .arg = ctx,
 	};
-	if ((status = ucp_worker_set_am_recv_handler(worker, &mkdir_param)) !=
-	    UCS_OK) {
+	if ((status = ucp_worker_set_am_recv_handler(ctx->ucp_worker,
+						     &mkdir_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(mkdir) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -968,7 +1003,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 worker, &inode_create_param)) != UCS_OK) {
+		 ctx->ucp_worker, &inode_create_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(create) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -982,7 +1017,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 worker, &inode_unlink_param)) != UCS_OK) {
+		 ctx->ucp_worker, &inode_unlink_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(unlink) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -996,7 +1031,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 worker, &inode_stat_param)) != UCS_OK) {
+		 ctx->ucp_worker, &inode_stat_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(stat) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1010,7 +1045,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 worker, &inode_write_param)) != UCS_OK) {
+		 ctx->ucp_worker, &inode_write_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(write) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1024,7 +1059,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 worker, &inode_read_param)) != UCS_OK) {
+		 ctx->ucp_worker, &inode_read_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(write) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1038,7 +1073,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 worker, &dir_move_param)) != UCS_OK) {
+		 ctx->ucp_worker, &dir_move_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(dir move) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1052,7 +1087,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 worker, &chunk_stat_param)) != UCS_OK) {
+		 ctx->ucp_worker, &chunk_stat_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
 		    ucs_status_string(status));
@@ -1067,7 +1102,7 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 worker, &inode_truncate_param)) != UCS_OK) {
+		 ctx->ucp_worker, &inode_truncate_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
 		    ucs_status_string(status));
@@ -1081,14 +1116,38 @@ fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
 	    .cb = fs_rpc_readdir_recv,
 	    .arg = ctx,
 	};
-	if ((status = ucp_worker_set_am_recv_handler(worker, &readdir_param)) !=
-	    UCS_OK) {
+	if ((status = ucp_worker_set_am_recv_handler(
+		 ctx->ucp_worker, &readdir_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
 		    ucs_status_string(status));
 		return (-1);
 	}
+
+	fs_inode_init(db_dir);
 	return (0);
+}
+
+int
+fs_server_get_address(int trank, void **addr, size_t *addr_len)
+{
+	struct worker_ctx *ctx = &all_ctx[trank];
+	ucs_status_t status;
+	if ((status =
+		 ucp_worker_get_address(ctx->ucp_worker, (ucp_address_t **)addr,
+					addr_len)) != UCS_OK) {
+		log_error("ucp_worker_get_address() failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	return (0);
+}
+
+void
+fs_server_release_address(int trank, void *addr)
+{
+	struct worker_ctx *ctx = &all_ctx[trank];
+	ucp_worker_release_address(ctx->ucp_worker, addr);
 }
 
 int
@@ -1096,6 +1155,8 @@ fs_server_term(int trank)
 {
 	struct worker_ctx *ctx = &all_ctx[trank];
 	free_meta_tree(&ctx->root);
+	ucp_worker_destroy(ctx->ucp_worker);
+	ucp_cleanup(ctx->ucp_context);
 	return (0);
 }
 

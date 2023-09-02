@@ -1,5 +1,4 @@
 #include <mpi.h>
-#include <ucp/api/ucp.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <string.h>
@@ -9,14 +8,13 @@
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdint.h>
 #include "config.h"
 #include "fs_types.h"
 #include "fs_rpc.h"
 #include "log.h"
 
 typedef struct {
-	ucp_context_h ucp_context;
-	ucp_worker_h *ucp_workers;
 	int rank;
 	int nprocs;
 	int nthreads;
@@ -44,24 +42,20 @@ dump_addrfile(finchfsd_ctx_t *ctx)
 	int vprocs;
 	void *addr_allthreads;
 	size_t addr_len;
-	ucs_status_t status;
 	int fd;
 
 	vprocs = ctx->nprocs * ctx->nthreads;
 
 	for (int i = 0; i < ctx->nthreads; i++) {
-		ucp_address_t *addr;
-		if ((status = ucp_worker_get_address(ctx->ucp_workers[i], &addr,
-						     &addr_len)) != UCS_OK) {
-			log_error("ucp_worker_get_address() failed: %s",
-				  ucs_status_string(status));
+		void *addr;
+		if (fs_server_get_address(i, &addr, &addr_len)) {
 			return (-1);
 		}
 		if (i == 0) {
 			addr_allthreads = malloc(addr_len * ctx->nthreads);
 		}
 		memcpy(addr_allthreads + addr_len * i, addr, addr_len);
-		ucp_worker_release_address(ctx->ucp_workers[i], addr);
+		fs_server_release_address(i, addr);
 	}
 
 	fd = creat(DUMP_ADDR_FILE, S_IWUSR | S_IRUSR);
@@ -106,7 +100,6 @@ main(int argc, char **argv)
 	    .db_dir = "/tmp/finch_data",
 	    .nthreads = 1,
 	};
-	ucs_status_t status;
 	pthread_t handler_thread;
 	pthread_t *worker_threads;
 	int *worker_thread_args;
@@ -142,40 +135,16 @@ main(int argc, char **argv)
 	MPI_Comm_rank(MPI_COMM_WORLD, &ctx.rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &ctx.nprocs);
 
-	ucp_params_t ucp_params = {
-	    .field_mask = UCP_PARAM_FIELD_FEATURES,
-	    .features = UCP_FEATURE_RMA | UCP_FEATURE_AM,
-	};
-	if ((status = ucp_init(&ucp_params, NULL, &ctx.ucp_context)) !=
-	    UCS_OK) {
-		log_fatal("ucp_init() failed: %s", ucs_status_string(status));
-		return (-1);
-	}
-	ctx.ucp_workers = malloc(sizeof(ucp_worker_h) * ctx.nthreads);
-
-	ucp_worker_params_t ucp_worker_params = {
-	    .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
-	    .thread_mode = UCS_THREAD_MODE_SINGLE};
 	for (int i = 0; i < ctx.nthreads; i++) {
-		if ((status =
-			 ucp_worker_create(ctx.ucp_context, &ucp_worker_params,
-					   &ctx.ucp_workers[i])) != UCS_OK) {
-			log_fatal("ucp_worker_create() failed: %s",
-				  ucs_status_string(status));
-			return (-1);
-		}
-		if (fs_server_init(ctx.ucp_workers[i], ctx.db_dir, ctx.rank,
-				   ctx.nprocs, i, ctx.nthreads,
-				   &ctx.shutdown)) {
-			log_fatal("fs_server_init() failed: %s",
-				  ucs_status_string(status));
+		if (fs_server_init(ctx.db_dir, ctx.rank, ctx.nprocs, i,
+				   ctx.nthreads, &ctx.shutdown)) {
+			log_fatal("fs_server_init() failed");
 			return (-1);
 		}
 	}
 
 	if (dump_addrfile(&ctx)) {
-		log_fatal("dump_addrfile() failed: %s",
-			  ucs_status_string(status));
+		log_fatal("dump_addrfile() failed");
 		return (-1);
 	}
 	MPI_Finalize();
@@ -197,10 +166,7 @@ main(int argc, char **argv)
 			pthread_join(worker_threads[i], NULL);
 		}
 		fs_server_term(i);
-		ucp_worker_destroy(ctx.ucp_workers[i]);
 	}
-
-	ucp_cleanup(ctx.ucp_context);
 
 	free(worker_threads);
 	free(worker_thread_args);

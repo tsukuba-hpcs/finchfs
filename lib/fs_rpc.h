@@ -37,25 +37,9 @@ int fs_rpc_dir_move(const char *oldpath, const char *newpath);
 int fs_client_init(char *addrfile);
 int fs_client_term(void);
 
-int fs_server_init(ucp_worker_h worker, char *db_dir, int rank, int nprocs,
-		   int trank, int nthreads, int *shutdown);
+int fs_server_init(char *db_dir, int rank, int nprocs, int trank, int nthreads,
+		   int *shutdown);
+int fs_server_get_address(int trank, void **addr, size_t *addr_len);
+void fs_server_release_address(int trank, void *addr);
 int fs_server_term(int trank);
 void *fs_server_progress(void *arg);
-
-typedef struct {
-	void *header;
-	int n;
-	ucp_dt_iov_t iov[];
-} iov_req_t;
-
-typedef struct {
-	void *header;
-	void *buf;
-} contig_req_t;
-
-typedef struct {
-	void *header;
-	void *buf;
-	size_t size;
-	ucp_ep_h reply_ep;
-} req_rndv_t;
