@@ -475,12 +475,18 @@ fs_client_term(void)
 	while (!all_req_finish(reqs, env.nvprocs)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
+
+	int r = 0;
 	for (int i = 0; i < env.nvprocs; i++) {
-		if (reqs[i] != NULL && UCS_PTR_IS_ERR(reqs[i])) {
+		if (reqs[i] == NULL) {
+			continue;
+		}
+		if (UCS_PTR_IS_ERR(reqs[i])) {
 			log_error("ucp_ep_close_nbx() failed: %s",
 				  ucs_status_string(UCS_PTR_STATUS(reqs[i])));
-			return (-1);
+			r = -1;
 		}
+		ucp_request_free(reqs[i]);
 	}
 
 	free(reqs);
@@ -488,7 +494,7 @@ fs_client_term(void)
 	ucp_worker_destroy(env.ucp_worker);
 	ucp_cleanup(env.ucp_context);
 
-	return (0);
+	return (r);
 }
 
 static int
