@@ -312,7 +312,7 @@ fs_client_init(char *addrfile)
 			    .arg = NULL,
 			    .cb = ep_err_cb,
 			},
-		    .err_mode = UCP_ERR_HANDLING_MODE_PEER,
+		    .err_mode = UCP_ERR_HANDLING_MODE_NONE,
 		    .address = (ucp_address_t *)(addr_allprocs + addr_len * i),
 		};
 		if ((status = ucp_ep_create(env.ucp_worker, &ucp_ep_params,
@@ -465,7 +465,7 @@ fs_client_term(void)
 	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
 	ucp_request_param_t params = {
 	    .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
-	    .flags = UCP_EP_CLOSE_MODE_FLUSH,
+	    .flags = UCP_EP_CLOSE_MODE_FORCE,
 	};
 
 	for (int i = 0; i < env.nvprocs; i++) {
@@ -476,7 +476,7 @@ fs_client_term(void)
 		ucp_worker_progress(env.ucp_worker);
 	}
 	for (int i = 0; i < env.nvprocs; i++) {
-		if (UCS_PTR_IS_ERR(reqs[i])) {
+		if (reqs[i] != NULL && UCS_PTR_IS_ERR(reqs[i])) {
 			log_error("ucp_ep_close_nbx() failed: %s",
 				  ucs_status_string(UCS_PTR_STATUS(reqs[i])));
 			return (-1);
