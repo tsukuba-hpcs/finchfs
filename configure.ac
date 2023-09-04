@@ -36,7 +36,6 @@ AC_FUNC_REALLOC
 AC_CHECK_FUNCS([fcntl.h stdlib.h string.h syslog.h unistd.h])
 
 AC_DEFINE([DUMP_ADDR_FILE], ["/tmp/finchfsd"], [File path to dump address to])
-AC_DEFINE([__USE_FILE_OFFSET64], [1], [Use 64 bit file offsets])
 
 AC_CONFIG_FILES([Makefile lib/Makefile finchfsd/Makefile pkgconfig/finchfs.pc pkgconfig/Makefile])
 AC_OUTPUT
