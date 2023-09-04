@@ -357,7 +357,6 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			  path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		log_debug("fs_rpc_inode_create_recv() create path=%s", path);
 		uint32_t ni_ino = i_ino;
 		if (i_ino == 0) {
 			entry_t key = {.name = filename};
@@ -368,6 +367,8 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 				ni_ino = alloc_ino(ctx);
 			}
 		}
+		log_debug("fs_rpc_inode_create_recv() create path=%s inode=%u",
+			  path, ni_ino);
 		entry_t newent = {
 		    .name = strdup(filename),
 		    .mode = mode,
