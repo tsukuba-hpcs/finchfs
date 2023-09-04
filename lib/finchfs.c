@@ -157,7 +157,7 @@ finchfs_close(int fd)
 ssize_t
 finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 {
-	log_debug("finchfs_pwrite() called fd=%d size=%zu offset=%d", fd, size,
+	log_debug("finchfs_pwrite() called fd=%d size=%zu offset=%ld", fd, size,
 		  offset);
 	ssize_t ret;
 	uint32_t index;
@@ -239,7 +239,7 @@ finchfs_write(int fd, const void *buf, size_t size)
 ssize_t
 finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 {
-	log_debug("finchfs_pread() called fd=%d size=%zu offset=%d", fd, size,
+	log_debug("finchfs_pread() called fd=%d size=%zu offset=%ld", fd, size,
 		  offset);
 	ssize_t ret;
 	uint32_t index;
