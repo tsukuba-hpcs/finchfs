@@ -910,7 +910,7 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 			log_debug("fs_rpc_dir_move_recv() opath=%s is not a "
 				  "directory",
 				  opath);
-			*(int *)(user_data->iov[0].buffer) = FINCH_EISDIR;
+			*(int *)(user_data->iov[0].buffer) = FINCH_ENOTDIR;
 		} else {
 			entry_t newent = {
 			    .name = strdup(ndirname),

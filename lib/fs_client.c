@@ -502,7 +502,7 @@ path_to_target_hash(const char *path, int div)
 {
 	long h = 0;
 	int slash = -1;
-	char *head = strdup(path);
+	char *head = (char *)path;
 	char *next;
 	long n;
 	for (int i = 0; head[i] != '\0'; i++) {
@@ -519,7 +519,6 @@ path_to_target_hash(const char *path, int div)
 		}
 		h += n;
 	}
-	free(head);
 	return (int)(h % div);
 }
 
