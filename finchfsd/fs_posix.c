@@ -81,29 +81,6 @@ fs_inode_read(uint64_t i_ino, uint64_t index, off_t offset, size_t size,
 }
 
 int
-fs_inode_chunk_stat(uint64_t i_ino, uint64_t index, size_t *size)
-{
-	log_debug("fs_inode_chunk_stat() called i_ino=%lu index=%lu", i_ino,
-		  index);
-	char buffer[128];
-	snprintf(buffer, sizeof(buffer), "%lu.%lu", i_ino, index);
-	struct stat st;
-	int ret;
-	ret = stat(buffer, &st);
-	if (ret < 0) {
-		if (errno == ENOENT) {
-			log_debug("fs_inode_chunk_stat stat() failed: ENOENT");
-		} else {
-			log_error("fs_inode_chunk_stat stat() failed: %s",
-				  strerror(errno));
-		}
-		return (-1);
-	}
-	*size = (size_t)st.st_size;
-	return (0);
-}
-
-int
 fs_inode_truncate(uint64_t i_ino, uint64_t index, off_t offset)
 {
 	log_debug("fs_inode_truncate() called i_ino=%lu index=%lu", i_ino,

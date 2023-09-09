@@ -214,13 +214,13 @@ fs_rpc_readdir_reply(void *arg, const void *header, size_t header_length,
 			st.st_mode = ent->mode;
 			st.st_uid = getuid();
 			st.st_gid = getgid();
-			st.st_size = -1;
+			st.st_size = ent->size;
 			st.st_mtim = ent->mtime;
 			st.st_ctim = ent->ctime;
 			st.st_nlink = 1;
 			st.st_ino = ent->i_ino;
 			st.st_blksize = ent->chunk_size;
-			st.st_blocks = 0;
+			st.st_blocks = NUM_BLOCKS(ent->size);
 
 			handle->filler(handle->arg, ent->path, &st);
 		}
@@ -397,21 +397,6 @@ fs_client_init(char *addrfile)
 		 env.ucp_worker, &inode_read_reply_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(inode read) failed: %s",
-		    ucs_status_string(status));
-		return (-1);
-	}
-	ucp_am_handler_param_t inode_chunk_stat_reply_param = {
-	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
-			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
-			  UCP_AM_HANDLER_PARAM_FIELD_CB,
-	    .id = RPC_INODE_CHUNK_STAT_REP,
-	    .cb = fs_rpc_inode_chunk_stat_reply,
-	    .arg = NULL,
-	};
-	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &inode_chunk_stat_reply_param)) != UCS_OK) {
-		log_error(
-		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
 		    ucs_status_string(status));
 		return (-1);
 	}
@@ -954,20 +939,21 @@ fs_rpc_inode_truncate(uint64_t i_ino, uint64_t index, off_t offset)
 }
 
 int
-fs_rpc_inode_chunk_stat(uint64_t i_ino, uint64_t index, size_t *size)
+fs_rpc_inode_stat_update(const char *path, size_t size, int truncate)
 {
-	int target = (i_ino + index) % env.nvprocs;
-	ucp_dt_iov_t iov[2];
-	iov[0].buffer = &i_ino;
-	iov[0].length = sizeof(i_ino);
-	iov[1].buffer = &index;
-	iov[1].length = sizeof(index);
+	int path_len = strlen(path) + 1;
+	int target = path_to_target_hash(path, env.nvprocs);
+	size_t ssize = (size << 1) + (truncate == 0 ? 0 : 1);
+	ucp_dt_iov_t iov[3];
+	iov[0].buffer = &path_len;
+	iov[0].length = sizeof(path_len);
+	iov[1].buffer = (void *)path;
+	iov[1].length = path_len;
+	iov[2].buffer = &ssize;
+	iov[2].length = sizeof(ssize);
 
-	inode_chunk_stat_handle_t handle;
-	handle.ret = FINCH_INPROGRESS;
-
-	void *handle_addr = &handle;
-	int *ret_addr = &handle.ret;
+	int ret = FINCH_INPROGRESS;
+	int *ret_addr = &ret;
 
 	ucp_request_param_t rparam = {
 	    .op_attr_mask =
@@ -975,10 +961,11 @@ fs_rpc_inode_chunk_stat(uint64_t i_ino, uint64_t index, size_t *size)
 	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
 	    .datatype = UCP_DATATYPE_IOV,
 	};
+
 	ucs_status_ptr_t req;
-	req =
-	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_CHUNK_STAT_REQ,
-			    &handle_addr, sizeof(handle_addr), iov, 2, &rparam);
+	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_STAT_UPDATE_REQ,
+			      &ret_addr, sizeof(void *), iov, 3, &rparam);
+
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
 		ucp_worker_progress(env.ucp_worker);
@@ -986,7 +973,7 @@ fs_rpc_inode_chunk_stat(uint64_t i_ino, uint64_t index, size_t *size)
 	if (req != NULL) {
 		status = ucp_request_check_status(req);
 		if (status != UCS_OK) {
-			log_error("fs_rpc_inode_chunk_stat: ucp_am_send_nbx() "
+			log_error("fs_rpc_inode_stat_update: ucp_am_send_nbx() "
 				  "failed: %s",
 				  ucs_status_string(status));
 			errno = EIO;
@@ -995,28 +982,17 @@ fs_rpc_inode_chunk_stat(uint64_t i_ino, uint64_t index, size_t *size)
 		ucp_request_free(req);
 	}
 
-	log_debug("fs_rpc_inode_chunk_stat: ucp_am_send_nbx() succeeded");
+	log_debug("fs_rpc_inode_stat_update: ucp_am_send_nbx() succeeded");
 	while (!all_ret_finish(&ret_addr, 1)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
-	if (handle.ret != FINCH_OK) {
-		if (handle.ret != FINCH_ENOENT) {
-			log_error("fs_rpc_inode_chunk_stat: stat(index=%zu) "
-				  "failed: %s",
-				  index, strerror(-handle.ret));
-		} else {
-			log_debug(
-			    "fs_rpc_inode_chunk_stat: stat(index=%zu) failed "
-			    "with ENOENT",
-			    index);
-		}
-		errno = -handle.ret;
+	if (ret != FINCH_OK) {
+		log_error("fs_rpc_inode_stat_update: stat() failed: %s",
+			  strerror(-ret));
+		errno = -ret;
 		return (-1);
 	}
-	*size = handle.size;
-	log_debug(
-	    "fs_rpc_inode_chunk_stat: succeeded ino=%zu index=%zu size=%zu",
-	    i_ino, index, *size);
+	log_debug("fs_rpc_inode_stat_update: succeeded");
 	return (0);
 }
 

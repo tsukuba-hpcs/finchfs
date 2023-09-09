@@ -3,6 +3,7 @@ typedef struct {
 	uint64_t i_ino;
 	uint64_t mode;
 	struct timespec mtime, ctime;
+	size_t size;
 } fs_stat_t;
 
 typedef struct {
@@ -33,9 +34,13 @@ typedef struct {
 	uint64_t i_ino;
 	uint64_t mode;
 	struct timespec mtime, ctime;
+	size_t size;
 	int path_len;
 	char path[];
 } readdir_entry_t;
+
+/* Number of 512B blocks */
+#define NUM_BLOCKS(size) ((size + 511) / 512)
 
 typedef enum {
 	FINCH_OK = 0,

@@ -19,6 +19,7 @@ static struct fd_table {
 	mode_t mode;
 	size_t chunk_size;
 	off_t pos;
+	size_t size;
 	uint64_t i_ino;
 } *fd_table;
 
@@ -89,6 +90,7 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 	fd_table[fd].chunk_size = chunk_size;
 	fd_table[fd].pos = 0;
 	fd_table[fd].i_ino = 0;
+	fd_table[fd].size = 0;
 
 	mode |= S_IFREG;
 	ret = fs_rpc_inode_create(p, mode, chunk_size, &fd_table[fd].i_ino);
@@ -134,6 +136,7 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].i_ino = st.i_ino;
 	fd_table[fd].mode = st.mode;
 	fd_table[fd].chunk_size = st.chunk_size;
+	fd_table[fd].size = st.size;
 	log_debug("finchfs_open() called path=%s inode=%d chunk_size=%zu", path,
 		  st.i_ino, st.chunk_size);
 	return (fd);
@@ -143,15 +146,15 @@ int
 finchfs_close(int fd)
 {
 	log_debug("finchfs_close() called fd=%d", fd);
-	if (fd < 0 || fd >= fd_table_size) {
+	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
 		return (-1);
 	}
-	if (fd_table[fd].path) {
-		free(fd_table[fd].path);
-		fd_table[fd].path = NULL;
-	}
-	return 0;
+	int ret = 0;
+	ret = fs_rpc_inode_stat_update(fd_table[fd].path, fd_table[fd].size, 0);
+	free(fd_table[fd].path);
+	fd_table[fd].path = NULL;
+	return (ret);
 }
 
 ssize_t
@@ -217,6 +220,9 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 	ret = fs_async_rpc_inode_write_wait(hdles, nchunks);
 	log_debug("fs_async_rpc_inode_write_wait succeeded ret=%d", ret);
 	free(hdles);
+	if (ret >= 0 && offset + ret > fd_table[fd].size) {
+		fd_table[fd].size = offset + ret;
+	}
 	return (ret);
 }
 
@@ -319,6 +325,19 @@ finchfs_read(int fd, void *buf, size_t size)
 }
 
 int
+finchfs_fsync(int fd)
+{
+	log_debug("finchfs_fsync() called fd=%d", fd);
+	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	int ret;
+	ret = fs_rpc_inode_stat_update(fd_table[fd].path, fd_table[fd].size, 0);
+	return (ret);
+}
+
+int
 finchfs_truncate(const char *path, off_t len)
 {
 	log_debug("finchfs_truncate() called path=%s len=%d", path, len);
@@ -326,8 +345,8 @@ finchfs_truncate(const char *path, off_t len)
 	fs_stat_t st;
 	char *p = canonical_path(path);
 	ret = fs_rpc_inode_stat(p, &st);
-	free(p);
 	if (ret) {
+		free(p);
 		return (-1);
 	}
 	uint64_t index = 0;
@@ -335,11 +354,13 @@ finchfs_truncate(const char *path, off_t len)
 		ret = fs_rpc_inode_truncate(st.i_ino, index, st.chunk_size);
 		index++;
 		if (ret) {
+			free(p);
 			return (-1);
 		}
 	}
 	ret = fs_rpc_inode_truncate(st.i_ino, index, len % st.chunk_size);
 	if (ret) {
+		free(p);
 		return (-1);
 	}
 	index++;
@@ -349,10 +370,13 @@ finchfs_truncate(const char *path, off_t len)
 			ret = 0;
 			break;
 		} else if (ret) {
+			free(p);
 			return (-1);
 		}
 		index++;
 	}
+	ret = fs_rpc_inode_stat_update(p, len, 1);
+	free(p);
 	return (ret);
 }
 
@@ -391,9 +415,6 @@ finchfs_rmdir(const char *path)
 	return (ret);
 }
 
-/* Number of 512B blocks */
-#define NUM_BLOCKS(size) ((size + 511) / 512)
-
 int
 finchfs_stat(const char *path, struct stat *st)
 {
@@ -409,40 +430,13 @@ finchfs_stat(const char *path, struct stat *st)
 	st->st_mode = fst.mode;
 	st->st_uid = getuid();
 	st->st_gid = getgid();
-	st->st_size = 0;
+	st->st_size = fst.size;
 	st->st_mtim = fst.mtime;
 	st->st_ctim = fst.ctime;
 	st->st_nlink = 1;
 	st->st_ino = fst.i_ino;
 	st->st_blksize = fst.chunk_size;
-	st->st_blocks = 0;
-
-	int i = 1;
-	int j = -1;
-
-	while (1) {
-		uint64_t index = (i + j);
-		size_t size;
-		ret = fs_rpc_inode_chunk_stat(st->st_ino, index, &size);
-		if (ret && errno == ENOENT) {
-			if (i == 1) {
-				break;
-			}
-			i /= 2;
-			st->st_size += fst.chunk_size * i;
-			j += i;
-			i = 1;
-			continue;
-		} else if (ret) {
-			break;
-		}
-		if (size == 0 || size < fst.chunk_size) {
-			st->st_size += fst.chunk_size * (i - 1) + size;
-			break;
-		}
-		i *= 2;
-	}
-	st->st_blocks = NUM_BLOCKS(st->st_size);
+	st->st_blocks = NUM_BLOCKS(fst.size);
 	free(p);
 	return (0);
 }

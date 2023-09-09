@@ -10,17 +10,16 @@
 #define RPC_INODE_READ_REP 0x0a
 #define RPC_INODE_UNLINK_REQ 0x0b
 #define RPC_DIR_MOVE_REQ 0x0c
-#define RPC_INODE_CHUNK_STAT_REQ 0x0d
-#define RPC_INODE_CHUNK_STAT_REP 0x0e
-#define RPC_INODE_TRUNCATE_REQ 0x0f
-#define RPC_READDIR_REQ 0x10
-#define RPC_READDIR_REP 0x11
+#define RPC_INODE_STAT_UPDATE_REQ 0x0d
+#define RPC_INODE_TRUNCATE_REQ 0x0e
+#define RPC_READDIR_REQ 0x0f
+#define RPC_READDIR_REP 0x10
 
 int fs_rpc_mkdir(const char *path, mode_t mode);
 int fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 			uint64_t *i_ino);
 int fs_rpc_inode_stat(const char *path, fs_stat_t *st);
-int fs_rpc_inode_chunk_stat(uint64_t i_ino, uint64_t index, size_t *size);
+int fs_rpc_inode_stat_update(const char *path, size_t size, int truncate);
 int fs_rpc_inode_truncate(uint64_t i_ino, uint64_t index, off_t offset);
 void *fs_async_rpc_inode_write(uint64_t i_ino, uint64_t index, off_t offset,
 			       size_t size, const void *buf);

@@ -43,6 +43,7 @@ typedef struct {
 	uint64_t i_ino;
 	struct timespec mtime;
 	struct timespec ctime;
+	size_t size;
 	struct hashmap *entries;
 } entry_t;
 
@@ -374,6 +375,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		    .mode = mode,
 		    .chunk_size = chunk_size,
 		    .i_ino = ni_ino,
+		    .size = 0,
 		    .entries = NULL,
 		};
 		timespec_get(&newent.mtime, TIME_UTC);
@@ -492,6 +494,7 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 			st->mode = ent->mode;
 			st->mtime = ent->mtime;
 			st->ctime = ent->ctime;
+			st->size = ent->size;
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		}
 	}
@@ -503,44 +506,63 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 }
 
 ucs_status_t
-fs_rpc_inode_chunk_stat_recv(void *arg, const void *header,
-			     size_t header_length, void *data, size_t length,
-			     const ucp_am_recv_param_t *param)
+fs_rpc_inode_stat_update_recv(void *arg, const void *header,
+			      size_t header_length, void *data, size_t length,
+			      const ucp_am_recv_param_t *param)
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	uint64_t i_ino;
-	uint64_t index;
+	int path_len;
+	char *path;
+	size_t ssize;
 	size_t offset = 0;
-	i_ino = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(i_ino);
-	index = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(path_len);
+	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += path_len;
+	ssize = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
-	log_debug("fs_rpc_inode_chunk_stat_recv() called i_ino=%lu index=%lu",
-		  i_ino, index);
+	log_debug("fs_rpc_inode_stat_update_recv() called path=%s size=%zu",
+		  path, ssize >> 1);
 
-	iov_req_t *user_data =
-	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
+	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
 	user_data->header = malloc(header_length);
 	memcpy(user_data->header, header, header_length);
-	user_data->n = 2;
+	user_data->n = 1;
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
-	user_data->iov[1].buffer = malloc(sizeof(size_t));
-	user_data->iov[1].length = sizeof(size_t);
 
-	if (fs_inode_chunk_stat(i_ino, index,
-				(size_t *)user_data->iov[1].buffer)) {
-		log_debug("fs_rpc_inode_chunk_stat_recv() i_ino=%ld index=%d "
-			  "does not exist",
-			  i_ino, index);
+	char name[128];
+	entry_t *parent = get_parent_and_filename(name, path, ctx);
+
+	if (parent == NULL) {
+		log_debug(
+		    "fs_rpc_inode_stat_update_recv() path=%s does not exist",
+		    path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+		entry_t key = {
+		    .name = name,
+		};
+		entry_t *ent = hashmap_get(parent->entries, &key);
+		if (ent == NULL) {
+			log_debug("fs_rpc_inode_stat_update_recv() path=%s "
+				  "does not exist",
+				  path);
+			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+		} else {
+			if (ssize & 1) {
+				ent->size = ssize >> 1;
+			} else if (ent->size < ssize >> 1) {
+				ent->size = ssize >> 1;
+			}
+			timespec_get(&ent->mtime, TIME_UTC);
+			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+		}
 	}
 
 	ucs_status_t status;
-	status = post_iov_req(param->reply_ep, RPC_INODE_CHUNK_STAT_REP,
-			      user_data, header_length);
+	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+			      header_length);
 	return (status);
 }
 
@@ -816,6 +838,7 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 		ent->mode = child->mode;
 		ent->mtime = child->mtime;
 		ent->ctime = child->ctime;
+		ent->size = child->size;
 		ent->path_len = strlen(child->name) + 1;
 		strcpy(ent->path, child->name);
 		user_data->iov[user_data->n].buffer = ent;
@@ -919,6 +942,7 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 			    .i_ino = ent->i_ino,
 			    .mtime = ent->mtime,
 			    .ctime = ent->ctime,
+			    .size = ent->size,
 			    .entries = ent->entries,
 			};
 			hashmap_delete(oparent->entries, &key);
@@ -1078,18 +1102,18 @@ fs_server_init(char *db_dir, int rank, int nprocs, int trank, int nthreads,
 			  ucs_status_string(status));
 		return (-1);
 	}
-	ucp_am_handler_param_t chunk_stat_param = {
+	ucp_am_handler_param_t inode_stat_update_param = {
 	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
 			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
-	    .id = RPC_INODE_CHUNK_STAT_REQ,
-	    .cb = fs_rpc_inode_chunk_stat_recv,
+	    .id = RPC_INODE_STAT_UPDATE_REQ,
+	    .cb = fs_rpc_inode_stat_update_recv,
 	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx->ucp_worker, &chunk_stat_param)) != UCS_OK) {
+		 ctx->ucp_worker, &inode_stat_update_param)) != UCS_OK) {
 		log_error(
-		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
+		    "ucp_worker_set_am_recv_handler(stat update) failed: %s",
 		    ucs_status_string(status));
 		return (-1);
 	}
