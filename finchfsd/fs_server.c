@@ -30,13 +30,17 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <time.h>
 #include "fs_types.h"
 #include "fs_rpc.h"
-#include "hashmap.h"
+#include "tree.h"
 #include "fs.h"
 #include "log.h"
 
 #define MAX_NTHREADS 128
 
-typedef struct {
+struct entry;
+struct entrytree {
+	struct entry *rbh_root;
+};
+struct entry {
 	char *name;
 	mode_t mode;
 	size_t chunk_size;
@@ -44,8 +48,11 @@ typedef struct {
 	struct timespec mtime;
 	struct timespec ctime;
 	size_t size;
-	struct hashmap *entries;
-} entry_t;
+	RB_ENTRY(entry) link;
+	struct entrytree entries;
+};
+
+typedef struct entry entry_t;
 
 struct worker_ctx {
 	int rank;
@@ -84,32 +91,29 @@ alloc_ino(struct worker_ctx *ctx)
 				  __ATOMIC_SEQ_CST);
 }
 
-static int
-entry_compare(const void *a, const void *b, void *udata)
+int
+entry_compare(entry_t *a, entry_t *b)
 {
-	const entry_t *ea = a;
-	const entry_t *eb = b;
-	return strcmp(ea->name, eb->name);
+	return strcmp(a->name, b->name);
 }
 
-static uint64_t
-entry_hash(const void *item, uint64_t seed0, uint64_t seed1)
-{
-	const entry_t *e = item;
-	return hashmap_sip(e->name, strlen(e->name), seed0, seed1);
-}
+RB_GENERATE(entrytree, entry, link, entry_compare);
 
 static void
 free_meta_tree(entry_t *entry)
 {
 	if (S_ISDIR(entry->mode)) {
-		size_t iter = 0;
-		void *item;
-		while (hashmap_iter(entry->entries, &iter, &item)) {
-			entry_t *child = item;
-			free_meta_tree(child);
+		entry_t *n;
+		while (1) {
+			n = RB_MIN(entrytree, &entry->entries);
+			if (n == NULL) {
+				break;
+			}
+			free_meta_tree(n);
+			RB_REMOVE(entrytree, &entry->entries, n);
+			free(n->name);
+			free(n);
 		}
-		hashmap_free(entry->entries);
 	}
 }
 
@@ -126,7 +130,7 @@ get_parent_and_filename(char *filename, const char *path,
 		memcpy(name, prev, p - prev);
 		name[p - prev] = '\0';
 		prev = ++p;
-		e = hashmap_get(e->entries, &(entry_t){.name = name});
+		e = RB_FIND(entrytree, &e->entries, &(entry_t){.name = name});
 		if (e == NULL) {
 			log_error(
 			    "get_parent_and_filename() path=%s does not exist",
@@ -160,7 +164,7 @@ get_dir_entry(const char *path, struct worker_ctx *ctx)
 		memcpy(name, prev, p - prev);
 		name[p - prev] = '\0';
 		prev = ++p;
-		e = hashmap_get(e->entries, &(entry_t){.name = name});
+		e = RB_FIND(entrytree, &e->entries, &(entry_t){.name = name});
 		if (e == NULL) {
 			log_error("get_dir() path=%s does not exist", path);
 			errno = ENOENT;
@@ -174,7 +178,7 @@ get_dir_entry(const char *path, struct worker_ctx *ctx)
 	}
 	memcpy(name, prev, path_len - (prev - path));
 	name[path_len - (prev - path)] = '\0';
-	e = hashmap_get(e->entries, &(entry_t){.name = name});
+	e = RB_FIND(entrytree, &e->entries, &(entry_t){.name = name});
 	if (e == NULL) {
 		log_error("get_dir() path=%s does not exist", path);
 		errno = ENOENT;
@@ -286,28 +290,25 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 			  path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		entry_t newent = {
-		    .name = strdup(dirname),
-		};
-		entry_t *ent = hashmap_get(parent->entries, &newent);
+		entry_t *newent = malloc(sizeof(entry_t));
+		newent->name = strdup(dirname);
+		entry_t *ent = RB_FIND(entrytree, &parent->entries, newent);
 		if (ent != NULL) {
 			log_debug("fs_rpc_mkdir_recv() path=%s already exists",
 				  path);
-			free(newent.name);
+			free(newent->name);
+			free(newent);
 			*(int *)(user_data->iov[0].buffer) = FINCH_EEXIST;
 		} else {
 			log_debug("fs_rpc_mkdir_recv() create path=%s", path);
-			newent.mode = mode;
-			newent.chunk_size = 0;
-			newent.i_ino = alloc_ino(ctx);
-			timespec_get(&newent.mtime, TIME_UTC);
-			timespec_get(&newent.ctime, TIME_UTC);
-			newent.entries =
-			    hashmap_new(sizeof(entry_t), 0, 0, 0, entry_hash,
-					entry_compare, NULL, NULL);
-			hashmap_set(parent->entries, &newent);
+			newent->mode = mode;
+			newent->chunk_size = 0;
+			newent->i_ino = alloc_ino(ctx);
+			timespec_get(&newent->mtime, TIME_UTC);
+			timespec_get(&newent->ctime, TIME_UTC);
+			newent->entries.rbh_root = NULL;
+			RB_INSERT(entrytree, &parent->entries, newent);
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-			ent = hashmap_get(parent->entries, &newent);
 		}
 	}
 
@@ -361,7 +362,8 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		uint64_t ni_ino = i_ino;
 		if (i_ino == 0) {
 			entry_t key = {.name = filename};
-			entry_t *ent = hashmap_get(parent->entries, &key);
+			entry_t *ent =
+			    RB_FIND(entrytree, &parent->entries, &key);
 			if (ent != NULL) {
 				ni_ino = ent->i_ino;
 			} else {
@@ -370,19 +372,17 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		}
 		log_debug("fs_rpc_inode_create_recv() create path=%s inode=%lu",
 			  path, ni_ino);
-		entry_t newent = {
-		    .name = strdup(filename),
-		    .mode = mode,
-		    .chunk_size = chunk_size,
-		    .i_ino = ni_ino,
-		    .size = 0,
-		    .entries = NULL,
-		};
-		timespec_get(&newent.mtime, TIME_UTC);
-		timespec_get(&newent.ctime, TIME_UTC);
-		hashmap_set(parent->entries, &newent);
+		entry_t *newent = malloc(sizeof(entry_t));
+		newent->name = strdup(filename);
+		newent->mode = mode;
+		newent->chunk_size = chunk_size;
+		newent->i_ino = ni_ino;
+		newent->size = 0;
+		timespec_get(&newent->mtime, TIME_UTC);
+		timespec_get(&newent->ctime, TIME_UTC);
+		RB_INSERT(entrytree, &parent->entries, newent);
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-		*(uint64_t *)(user_data->iov[1].buffer) = newent.i_ino;
+		*(uint64_t *)(user_data->iov[1].buffer) = newent->i_ino;
 	}
 
 	ucs_status_t status;
@@ -426,7 +426,7 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 		entry_t key = {
 		    .name = name,
 		};
-		entry_t *ent = hashmap_get(parent->entries, &key);
+		entry_t *ent = RB_FIND(entrytree, &parent->entries, &key);
 		if (ent == NULL) {
 			log_debug(
 			    "fs_rpc_inode_unlink_recv() path=%s does not exist",
@@ -436,7 +436,7 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 			*(uint64_t *)user_data->iov[1].buffer = ent->i_ino;
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 			free_meta_tree(ent);
-			hashmap_delete(parent->entries, &key);
+			RB_REMOVE(entrytree, &parent->entries, ent);
 		}
 	}
 
@@ -482,7 +482,7 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 		entry_t key = {
 		    .name = name,
 		};
-		const entry_t *ent = hashmap_get(parent->entries, &key);
+		const entry_t *ent = RB_FIND(entrytree, &parent->entries, &key);
 		if (ent == NULL) {
 			log_debug(
 			    "fs_rpc_inode_stat_recv() path=%s does not exist",
@@ -543,7 +543,7 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 		entry_t key = {
 		    .name = name,
 		};
-		entry_t *ent = hashmap_get(parent->entries, &key);
+		entry_t *ent = RB_FIND(entrytree, &parent->entries, &key);
 		if (ent == NULL) {
 			log_debug("fs_rpc_inode_stat_update_recv() path=%s "
 				  "does not exist",
@@ -824,10 +824,9 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 				      user_data, header_length);
 		return (status);
 	}
-	size_t iter = 0;
-	void *item;
-	while (hashmap_iter(dir->entries, &iter, &item)) {
-		entry_t *child = item;
+	entry_t *child;
+	RB_FOREACH(child, entrytree, &dir->entries)
+	{
 		if (rhdr->fileonly && S_ISDIR(child->mode)) {
 			continue;
 		}
@@ -923,7 +922,7 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 		entry_t key = {
 		    .name = odirname,
 		};
-		entry_t *ent = hashmap_get(oparent->entries, &key);
+		entry_t *ent = RB_FIND(entrytree, &oparent->entries, &key);
 		if (ent == NULL) {
 			log_debug(
 			    "fs_rpc_dir_move_recv() opath=%s does not exist",
@@ -935,18 +934,18 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 				  opath);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOTDIR;
 		} else {
-			entry_t newent = {
-			    .name = strdup(ndirname),
-			    .mode = ent->mode,
-			    .chunk_size = ent->chunk_size,
-			    .i_ino = ent->i_ino,
-			    .mtime = ent->mtime,
-			    .ctime = ent->ctime,
-			    .size = ent->size,
-			    .entries = ent->entries,
-			};
-			hashmap_delete(oparent->entries, &key);
-			hashmap_set(nparent->entries, &newent);
+			entry_t *newent = malloc(sizeof(entry_t));
+			newent->name = strdup(ndirname);
+			newent->mode = ent->mode;
+			newent->chunk_size = ent->chunk_size;
+			newent->i_ino = ent->i_ino;
+			newent->mtime = ent->mtime;
+			newent->ctime = ent->ctime;
+			newent->size = ent->size;
+			newent->entries = ent->entries;
+			RB_REMOVE(entrytree, &oparent->entries, ent);
+			free(ent->name);
+			RB_INSERT(entrytree, &nparent->entries, newent);
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		}
 	}
@@ -981,8 +980,7 @@ fs_server_init(char *db_dir, int rank, int nprocs, int trank, int nthreads,
 	ctx->root.i_ino = 0;
 	timespec_get(&ctx->root.mtime, TIME_UTC);
 	timespec_get(&ctx->root.ctime, TIME_UTC);
-	ctx->root.entries = hashmap_new(sizeof(entry_t), 0, 0, 0, entry_hash,
-					entry_compare, NULL, NULL);
+	ctx->root.entries.rbh_root = NULL;
 
 	ucs_status_t status;
 	ucp_params_t ucp_params = {
