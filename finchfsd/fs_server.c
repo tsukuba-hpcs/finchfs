@@ -40,7 +40,7 @@ typedef struct {
 	char *name;
 	mode_t mode;
 	size_t chunk_size;
-	uint32_t i_ino;
+	uint64_t i_ino;
 	struct timespec mtime;
 	struct timespec ctime;
 	struct hashmap *entries;
@@ -51,7 +51,7 @@ struct worker_ctx {
 	int nprocs;
 	int trank;
 	int nthreads;
-	uint32_t i_ino;
+	uint64_t i_ino;
 	ucp_context_h ucp_context;
 	ucp_worker_h ucp_worker;
 	int *shutdown;
@@ -76,7 +76,7 @@ typedef struct {
 	ucp_ep_h reply_ep;
 } req_rndv_t;
 
-static uint32_t
+static uint64_t
 alloc_ino(struct worker_ctx *ctx)
 {
 	return __atomic_fetch_add(&ctx->i_ino, ctx->nprocs * ctx->nthreads,
@@ -326,7 +326,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	char *path;
 	mode_t mode;
 	size_t chunk_size;
-	uint32_t i_ino;
+	uint64_t i_ino;
 	size_t offset = 0;
 	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(path_len);
@@ -336,7 +336,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	offset += sizeof(mode);
 	chunk_size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(chunk_size);
-	i_ino = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	i_ino = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
 	log_debug("fs_rpc_inode_create_recv() called path=%s", path);
 
@@ -347,8 +347,8 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	user_data->n = 2;
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
-	user_data->iov[1].buffer = malloc(sizeof(uint32_t));
-	user_data->iov[1].length = sizeof(uint32_t);
+	user_data->iov[1].buffer = malloc(sizeof(uint64_t));
+	user_data->iov[1].length = sizeof(uint64_t);
 
 	char filename[128];
 	entry_t *parent = get_parent_and_filename(filename, path, ctx);
@@ -357,7 +357,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			  path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		uint32_t ni_ino = i_ino;
+		uint64_t ni_ino = i_ino;
 		if (i_ino == 0) {
 			entry_t key = {.name = filename};
 			entry_t *ent = hashmap_get(parent->entries, &key);
@@ -367,7 +367,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 				ni_ino = alloc_ino(ctx);
 			}
 		}
-		log_debug("fs_rpc_inode_create_recv() create path=%s inode=%u",
+		log_debug("fs_rpc_inode_create_recv() create path=%s inode=%lu",
 			  path, ni_ino);
 		entry_t newent = {
 		    .name = strdup(filename),
@@ -380,7 +380,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		timespec_get(&newent.ctime, TIME_UTC);
 		hashmap_set(parent->entries, &newent);
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-		*(uint32_t *)(user_data->iov[1].buffer) = newent.i_ino;
+		*(uint64_t *)(user_data->iov[1].buffer) = newent.i_ino;
 	}
 
 	ucs_status_t status;
@@ -411,8 +411,8 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 	user_data->n = 2;
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
-	user_data->iov[1].buffer = malloc(sizeof(uint32_t));
-	user_data->iov[1].length = sizeof(uint32_t);
+	user_data->iov[1].buffer = malloc(sizeof(uint64_t));
+	user_data->iov[1].length = sizeof(uint64_t);
 
 	char name[128];
 	entry_t *parent = get_parent_and_filename(name, path, ctx);
@@ -431,7 +431,7 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 			    path);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 		} else {
-			*(uint32_t *)user_data->iov[1].buffer = ent->i_ino;
+			*(uint64_t *)user_data->iov[1].buffer = ent->i_ino;
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 			free_meta_tree(ent);
 			hashmap_delete(parent->entries, &key);
@@ -508,14 +508,14 @@ fs_rpc_inode_chunk_stat_recv(void *arg, const void *header,
 			     const ucp_am_recv_param_t *param)
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	uint32_t i_ino;
-	uint32_t index;
+	uint64_t i_ino;
+	uint64_t index;
 	size_t offset = 0;
-	i_ino = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	i_ino = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(i_ino);
-	index = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	index = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
-	log_debug("fs_rpc_inode_chunk_stat_recv() called i_ino=%u index=%u",
+	log_debug("fs_rpc_inode_chunk_stat_recv() called i_ino=%lu index=%lu",
 		  i_ino, index);
 
 	iov_req_t *user_data =
@@ -549,18 +549,18 @@ fs_rpc_inode_truncate_recv(void *arg, const void *header, size_t header_length,
 			   void *data, size_t length,
 			   const ucp_am_recv_param_t *param)
 {
-	uint32_t i_ino;
-	uint32_t index;
+	uint64_t i_ino;
+	uint64_t index;
 	off_t off;
 	size_t offset = 0;
-	i_ino = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	i_ino = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(i_ino);
-	index = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	index = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(index);
 	off = *(off_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
 	log_debug(
-	    "fs_rpc_inode_truncate_recv() called i_ino=%u index=%u off=%d",
+	    "fs_rpc_inode_truncate_recv() called i_ino=%lu index=%lu off=%d",
 	    i_ino, index, off);
 
 	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
@@ -587,7 +587,7 @@ fs_rpc_inode_truncate_recv(void *arg, const void *header, size_t header_length,
 }
 
 static int
-fs_rpc_inode_write_internal(uint32_t i_ino, uint32_t index, off_t offset,
+fs_rpc_inode_write_internal(uint64_t i_ino, uint64_t index, off_t offset,
 			    size_t size, const void *buf, ucp_ep_h reply_ep,
 			    void *handle)
 {
@@ -645,7 +645,7 @@ fs_rpc_inode_write_recv(void *arg, const void *header, size_t header_length,
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	inode_write_header_t *hdr = (inode_write_header_t *)header;
-	log_debug("fs_rpc_inode_write_recv() called i_ino=%u index=%u "
+	log_debug("fs_rpc_inode_write_recv() called i_ino=%lu index=%lu "
 		  "offset=%ld length=%zu",
 		  hdr->i_ino, hdr->index, hdr->offset, length);
 
@@ -710,7 +710,7 @@ fs_rpc_inode_read_recv(void *arg, const void *header, size_t header_length,
 	inode_read_header_t *rhdr = (inode_read_header_t *)user_data->header;
 	user_data->buf = malloc(rhdr->size);
 	log_debug(
-	    "fs_rpc_inode_read_recv() called i_ino=%u offset=%u length=%zu",
+	    "fs_rpc_inode_read_recv() called i_ino=%lu offset=%lu length=%zu",
 	    rhdr->i_ino, rhdr->offset, rhdr->size);
 
 	ucp_request_param_t rparam = {

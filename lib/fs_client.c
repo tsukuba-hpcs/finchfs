@@ -32,7 +32,7 @@ fs_rpc_ret_reply(void *arg, const void *header, size_t header_length,
 
 typedef struct {
 	int ret;
-	uint32_t i_ino;
+	uint64_t i_ino;
 } inode_create_handle_t;
 
 ucs_status_t
@@ -43,7 +43,7 @@ fs_rpc_inode_reply(void *arg, const void *header, size_t header_length,
 	size_t offset = 0;
 	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(int);
-	handle->i_ino = *(uint32_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	handle->i_ino = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 	return (UCS_OK);
 }
 
@@ -616,7 +616,7 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 
 int
 fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
-		    uint32_t *i_ino)
+		    uint64_t *i_ino)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
 	int path_len = strlen(path) + 1;
@@ -681,7 +681,7 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 }
 
 int
-fs_rpc_inode_unlink(const char *path, uint32_t *i_ino)
+fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
 	int path_len = strlen(path) + 1;
@@ -891,7 +891,7 @@ fs_rpc_inode_stat(const char *path, fs_stat_t *st)
 }
 
 int
-fs_rpc_inode_truncate(uint32_t i_ino, uint32_t index, off_t offset)
+fs_rpc_inode_truncate(uint64_t i_ino, uint64_t index, off_t offset)
 {
 	int target = (i_ino + index) % env.nvprocs;
 	ucp_dt_iov_t iov[3];
@@ -954,7 +954,7 @@ fs_rpc_inode_truncate(uint32_t i_ino, uint32_t index, off_t offset)
 }
 
 int
-fs_rpc_inode_chunk_stat(uint32_t i_ino, uint32_t index, size_t *size)
+fs_rpc_inode_chunk_stat(uint64_t i_ino, uint64_t index, size_t *size)
 {
 	int target = (i_ino + index) % env.nvprocs;
 	ucp_dt_iov_t iov[2];
@@ -1021,7 +1021,7 @@ fs_rpc_inode_chunk_stat(uint32_t i_ino, uint32_t index, size_t *size)
 }
 
 void *
-fs_async_rpc_inode_write(uint32_t i_ino, uint32_t index, off_t offset,
+fs_async_rpc_inode_write(uint64_t i_ino, uint64_t index, off_t offset,
 			 size_t size, const void *buf)
 {
 	if (size == 0) {
@@ -1134,7 +1134,7 @@ fs_async_rpc_inode_write_wait(void **hdles, int nreqs)
 }
 
 void *
-fs_async_rpc_inode_read(uint32_t i_ino, uint32_t index, off_t offset,
+fs_async_rpc_inode_read(uint64_t i_ino, uint64_t index, off_t offset,
 			size_t size, void *buf)
 {
 	if (size == 0) {

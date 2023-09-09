@@ -19,7 +19,7 @@ static struct fd_table {
 	mode_t mode;
 	size_t chunk_size;
 	off_t pos;
-	uint32_t i_ino;
+	uint64_t i_ino;
 } *fd_table;
 
 #define IS_NULL_STRING(str) (str == NULL || str[0] == '\0')
@@ -160,7 +160,7 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 	log_debug("finchfs_pwrite() called fd=%d size=%zu offset=%ld", fd, size,
 		  offset);
 	ssize_t ret;
-	uint32_t index;
+	uint64_t index;
 	off_t local_pos;
 	size_t chunk_size;
 	size_t tot;
@@ -242,7 +242,7 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 	log_debug("finchfs_pread() called fd=%d size=%zu offset=%ld", fd, size,
 		  offset);
 	ssize_t ret;
-	uint32_t index;
+	uint64_t index;
 	off_t local_pos;
 	size_t chunk_size;
 	size_t tot;
@@ -330,7 +330,7 @@ finchfs_truncate(const char *path, off_t len)
 	if (ret) {
 		return (-1);
 	}
-	uint32_t index = 0;
+	uint64_t index = 0;
 	while ((index + 1) * st.chunk_size <= len) {
 		ret = fs_rpc_inode_truncate(st.i_ino, index, st.chunk_size);
 		index++;
@@ -361,7 +361,7 @@ finchfs_unlink(const char *path)
 {
 	log_debug("finchfs_unlink() called path=%s", path);
 	int ret;
-	uint32_t i_ino;
+	uint64_t i_ino;
 	char *p = canonical_path(path);
 	ret = fs_rpc_inode_unlink(p, &i_ino);
 	free(p);
@@ -421,7 +421,7 @@ finchfs_stat(const char *path, struct stat *st)
 	int j = -1;
 
 	while (1) {
-		uint32_t index = (i + j);
+		uint64_t index = (i + j);
 		size_t size;
 		ret = fs_rpc_inode_chunk_stat(st->st_ino, index, &size);
 		if (ret && errno == ENOENT) {

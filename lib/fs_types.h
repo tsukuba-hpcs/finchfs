@@ -1,21 +1,21 @@
 typedef struct {
 	size_t chunk_size;
-	uint32_t i_ino;
-	uint32_t mode;
+	uint64_t i_ino;
+	uint64_t mode;
 	struct timespec mtime, ctime;
 } fs_stat_t;
 
 typedef struct {
 	void *handle;
-	uint32_t i_ino;
-	uint32_t index;
+	uint64_t i_ino;
+	uint64_t index;
 	off_t offset;
 } inode_write_header_t;
 
 typedef struct {
 	void *handle;
-	uint32_t i_ino;
-	uint32_t index;
+	uint64_t i_ino;
+	uint64_t index;
 	off_t offset;
 	ssize_t size;
 	int ret;
@@ -30,8 +30,8 @@ typedef struct {
 
 typedef struct {
 	size_t chunk_size;
-	uint32_t i_ino;
-	uint32_t mode;
+	uint64_t i_ino;
+	uint64_t mode;
 	struct timespec mtime, ctime;
 	int path_len;
 	char path[];

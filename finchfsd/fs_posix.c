@@ -28,14 +28,14 @@ fs_inode_init(char *db_dir)
 }
 
 ssize_t
-fs_inode_write(uint32_t i_ino, uint32_t index, off_t offset, size_t size,
+fs_inode_write(uint64_t i_ino, uint64_t index, off_t offset, size_t size,
 	       const void *buf)
 {
-	log_debug("fs_inode_write() called i_ino=%u index=%u offset=%ld "
+	log_debug("fs_inode_write() called i_ino=%lu index=%lu offset=%ld "
 		  "size=%zu",
 		  i_ino, index, offset, size);
 	char buffer[128];
-	snprintf(buffer, sizeof(buffer), "%u.%u", i_ino, index);
+	snprintf(buffer, sizeof(buffer), "%lu.%lu", i_ino, index);
 	int fd;
 	fd = open(buffer, O_WRONLY | O_CREAT, 0644);
 	if (fd < 0) {
@@ -55,14 +55,14 @@ fs_inode_write(uint32_t i_ino, uint32_t index, off_t offset, size_t size,
 }
 
 ssize_t
-fs_inode_read(uint32_t i_ino, uint32_t index, off_t offset, size_t size,
+fs_inode_read(uint64_t i_ino, uint64_t index, off_t offset, size_t size,
 	      void *buf)
 {
 	log_debug(
-	    "fs_inode_read() called i_ino=%u index=%u offset=%ld size=%zu",
+	    "fs_inode_read() called i_ino=%lu index=%lu offset=%ld size=%zu",
 	    i_ino, index, offset, size);
 	char buffer[128];
-	snprintf(buffer, sizeof(buffer), "%u.%u", i_ino, index);
+	snprintf(buffer, sizeof(buffer), "%lu.%lu", i_ino, index);
 	int fd;
 	fd = open(buffer, O_RDONLY);
 	if (fd < 0) {
@@ -81,12 +81,12 @@ fs_inode_read(uint32_t i_ino, uint32_t index, off_t offset, size_t size,
 }
 
 int
-fs_inode_chunk_stat(uint32_t i_ino, uint32_t index, size_t *size)
+fs_inode_chunk_stat(uint64_t i_ino, uint64_t index, size_t *size)
 {
-	log_debug("fs_inode_chunk_stat() called i_ino=%u index=%u", i_ino,
+	log_debug("fs_inode_chunk_stat() called i_ino=%lu index=%lu", i_ino,
 		  index);
 	char buffer[128];
-	snprintf(buffer, sizeof(buffer), "%u.%u", i_ino, index);
+	snprintf(buffer, sizeof(buffer), "%lu.%lu", i_ino, index);
 	struct stat st;
 	int ret;
 	ret = stat(buffer, &st);
@@ -104,11 +104,12 @@ fs_inode_chunk_stat(uint32_t i_ino, uint32_t index, size_t *size)
 }
 
 int
-fs_inode_truncate(uint32_t i_ino, uint32_t index, off_t offset)
+fs_inode_truncate(uint64_t i_ino, uint64_t index, off_t offset)
 {
-	log_debug("fs_inode_truncate() called i_ino=%u index=%u", i_ino, index);
+	log_debug("fs_inode_truncate() called i_ino=%lu index=%lu", i_ino,
+		  index);
 	char buffer[128];
-	snprintf(buffer, sizeof(buffer), "%u.%u", i_ino, index);
+	snprintf(buffer, sizeof(buffer), "%lu.%lu", i_ino, index);
 	int ret;
 	if (offset == 0) {
 		ret = unlink(buffer);
