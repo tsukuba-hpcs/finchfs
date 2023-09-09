@@ -292,7 +292,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	} else {
 		entry_t *newent = malloc(sizeof(entry_t));
 		newent->name = strdup(dirname);
-		entry_t *ent = RB_FIND(entrytree, &parent->entries, newent);
+		entry_t *ent = RB_INSERT(entrytree, &parent->entries, newent);
 		if (ent != NULL) {
 			log_debug("fs_rpc_mkdir_recv() path=%s already exists",
 				  path);
@@ -307,7 +307,6 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 			timespec_get(&newent->mtime, TIME_UTC);
 			timespec_get(&newent->ctime, TIME_UTC);
 			newent->entries.rbh_root = NULL;
-			RB_INSERT(entrytree, &parent->entries, newent);
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		}
 	}
@@ -329,6 +328,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	mode_t mode;
 	size_t chunk_size;
 	uint64_t i_ino;
+	size_t size;
 	size_t offset = 0;
 	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(path_len);
@@ -339,6 +339,8 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	chunk_size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(chunk_size);
 	i_ino = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(i_ino);
+	size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
 	log_debug("fs_rpc_inode_create_recv() called path=%s", path);
 
@@ -359,30 +361,40 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			  path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		uint64_t ni_ino = i_ino;
-		if (i_ino == 0) {
-			entry_t key = {.name = filename};
-			entry_t *ent =
-			    RB_FIND(entrytree, &parent->entries, &key);
-			if (ent != NULL) {
-				ni_ino = ent->i_ino;
-			} else {
-				ni_ino = alloc_ino(ctx);
-			}
-		}
-		log_debug("fs_rpc_inode_create_recv() create path=%s inode=%lu",
-			  path, ni_ino);
+		entry_t *ent = NULL;
 		entry_t *newent = malloc(sizeof(entry_t));
 		newent->name = strdup(filename);
-		newent->mode = mode;
-		newent->chunk_size = chunk_size;
-		newent->i_ino = ni_ino;
-		newent->size = 0;
-		timespec_get(&newent->mtime, TIME_UTC);
-		timespec_get(&newent->ctime, TIME_UTC);
-		RB_INSERT(entrytree, &parent->entries, newent);
+		ent = RB_INSERT(entrytree, &parent->entries, newent);
+
+		if (ent != NULL) {
+			free(newent->name);
+			free(newent);
+			if (i_ino > 0) {
+				ent->i_ino = i_ino;
+				ent->mode = mode;
+				ent->chunk_size = chunk_size;
+				ent->size = size;
+				timespec_get(&ent->mtime, TIME_UTC);
+				timespec_get(&ent->ctime, TIME_UTC);
+			}
+			*(uint64_t *)(user_data->iov[1].buffer) = ent->i_ino;
+		} else {
+			if (i_ino > 0) {
+				newent->i_ino = i_ino;
+			} else {
+				newent->i_ino = alloc_ino(ctx);
+			}
+			log_debug("fs_rpc_inode_create_recv() create path=%s "
+				  "inode=%lu",
+				  path, newent->i_ino);
+			newent->mode = mode;
+			newent->chunk_size = chunk_size;
+			newent->size = 0;
+			timespec_get(&newent->mtime, TIME_UTC);
+			timespec_get(&newent->ctime, TIME_UTC);
+			*(uint64_t *)(user_data->iov[1].buffer) = newent->i_ino;
+		}
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-		*(uint64_t *)(user_data->iov[1].buffer) = newent->i_ino;
 	}
 
 	ucs_status_t status;

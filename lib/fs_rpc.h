@@ -17,7 +17,7 @@
 
 int fs_rpc_mkdir(const char *path, mode_t mode);
 int fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
-			uint64_t *i_ino);
+			uint64_t *i_ino, size_t *size);
 int fs_rpc_inode_stat(const char *path, fs_stat_t *st);
 int fs_rpc_inode_stat_update(const char *path, size_t size, int truncate);
 int fs_rpc_inode_truncate(uint64_t i_ino, uint64_t index, off_t offset);
