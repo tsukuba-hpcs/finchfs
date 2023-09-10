@@ -11,6 +11,8 @@
 #include "fs_types.h"
 #include "fs.h"
 
+#define INODE_SPLIT_SIZE 1023
+
 void
 fs_inode_init(char *db_dir)
 {
@@ -23,6 +25,15 @@ fs_inode_init(char *db_dir)
 	}
 	if (ret == -1) {
 		log_fatal("%s: %s", db_dir, strerror(errno));
+	} else {
+		char buffer[128];
+		for (uint64_t i = 0; i < INODE_SPLIT_SIZE; i++) {
+			snprintf(buffer, sizeof(buffer), "%lu", i);
+			ret = mkdir(buffer, 0755);
+			if (ret == -1 && errno != EEXIST) {
+				log_fatal("%s: %s", buffer, strerror(errno));
+			}
+		}
 	}
 	log_debug("fs_inode_init() called db_dir=%s", db_dir);
 }
@@ -35,7 +46,8 @@ fs_inode_write(uint64_t i_ino, uint64_t index, off_t offset, size_t size,
 		  "size=%zu",
 		  i_ino, index, offset, size);
 	char buffer[128];
-	snprintf(buffer, sizeof(buffer), "%lu.%lu", i_ino, index);
+	snprintf(buffer, sizeof(buffer), "%lu/%lu.%lu",
+		 i_ino % INODE_SPLIT_SIZE, i_ino, index);
 	int fd;
 	fd = open(buffer, O_WRONLY | O_CREAT, 0644);
 	if (fd < 0) {
@@ -62,7 +74,8 @@ fs_inode_read(uint64_t i_ino, uint64_t index, off_t offset, size_t size,
 	    "fs_inode_read() called i_ino=%lu index=%lu offset=%ld size=%zu",
 	    i_ino, index, offset, size);
 	char buffer[128];
-	snprintf(buffer, sizeof(buffer), "%lu.%lu", i_ino, index);
+	snprintf(buffer, sizeof(buffer), "%lu/%lu.%lu",
+		 i_ino % INODE_SPLIT_SIZE, i_ino, index);
 	int fd;
 	fd = open(buffer, O_RDONLY);
 	if (fd < 0) {
@@ -86,7 +99,8 @@ fs_inode_truncate(uint64_t i_ino, uint64_t index, off_t offset)
 	log_debug("fs_inode_truncate() called i_ino=%lu index=%lu", i_ino,
 		  index);
 	char buffer[128];
-	snprintf(buffer, sizeof(buffer), "%lu.%lu", i_ino, index);
+	snprintf(buffer, sizeof(buffer), "%lu/%lu.%lu",
+		 i_ino % INODE_SPLIT_SIZE, i_ino, index);
 	int ret;
 	if (offset == 0) {
 		ret = unlink(buffer);
