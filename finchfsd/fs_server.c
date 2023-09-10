@@ -381,15 +381,16 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		} else {
 			if (i_ino > 0) {
 				newent->i_ino = i_ino;
+				newent->size = size;
 			} else {
 				newent->i_ino = alloc_ino(ctx);
+				newent->size = 0;
 			}
 			log_debug("fs_rpc_inode_create_recv() create path=%s "
 				  "inode=%lu",
 				  path, newent->i_ino);
 			newent->mode = mode;
 			newent->chunk_size = chunk_size;
-			newent->size = 0;
 			timespec_get(&newent->mtime, TIME_UTC);
 			timespec_get(&newent->ctime, TIME_UTC);
 			*(uint64_t *)(user_data->iov[1].buffer) = newent->i_ino;
