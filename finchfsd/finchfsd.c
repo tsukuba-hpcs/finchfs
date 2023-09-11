@@ -20,6 +20,7 @@ typedef struct {
 	int nthreads;
 	int shutdown;
 	char *db_dir;
+	size_t db_size;
 } finchfsd_ctx_t;
 
 static sigset_t sigset;
@@ -98,13 +99,14 @@ main(int argc, char **argv)
 	finchfsd_ctx_t ctx = {
 	    .shutdown = 0,
 	    .db_dir = "/tmp/finch_data",
+	    .db_size = 1024 * 1024 * 1024,
 	    .nthreads = 1,
 	};
 	pthread_t handler_thread;
 	pthread_t *worker_threads;
 	int *worker_thread_args;
 	int c;
-	while ((c = getopt(argc, argv, "d:v:t:")) != -1) {
+	while ((c = getopt(argc, argv, "d:v:t:s:")) != -1) {
 		switch (c) {
 		case 'd':
 			ctx.db_dir = strdup(optarg);
@@ -114,6 +116,9 @@ main(int argc, char **argv)
 			break;
 		case 't':
 			ctx.nthreads = atoi(optarg);
+			break;
+		case 's':
+			ctx.db_size = atol(optarg);
 			break;
 		default:
 			log_fatal("Unknown option %c", c);
@@ -136,8 +141,9 @@ main(int argc, char **argv)
 	MPI_Comm_size(MPI_COMM_WORLD, &ctx.nprocs);
 
 	for (int i = 0; i < ctx.nthreads; i++) {
-		if (fs_server_init(ctx.db_dir, ctx.rank, ctx.nprocs, i,
-				   ctx.nthreads, &ctx.shutdown)) {
+		if (fs_server_init(ctx.db_dir, ctx.db_size, ctx.rank,
+				   ctx.nprocs, i, ctx.nthreads,
+				   &ctx.shutdown)) {
 			log_fatal("fs_server_init() failed");
 			return (-1);
 		}

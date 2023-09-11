@@ -64,6 +64,7 @@ struct worker_ctx {
 	ucp_worker_h ucp_worker;
 	int *shutdown;
 	entry_t root;
+	struct fs_ctx *fs;
 } all_ctx[MAX_NTHREADS];
 
 typedef struct {
@@ -82,6 +83,7 @@ typedef struct {
 	void *buf;
 	size_t size;
 	ucp_ep_h reply_ep;
+	struct fs_ctx *fs;
 } req_rndv_t;
 
 static uint64_t
@@ -584,6 +586,7 @@ fs_rpc_inode_truncate_recv(void *arg, const void *header, size_t header_length,
 			   void *data, size_t length,
 			   const ucp_am_recv_param_t *param)
 {
+	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	uint64_t i_ino;
 	uint64_t index;
 	off_t off;
@@ -606,7 +609,7 @@ fs_rpc_inode_truncate_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[0].length = sizeof(int);
 
 	int ret;
-	ret = fs_inode_truncate(i_ino, index, off);
+	ret = fs_inode_truncate(ctx->fs, i_ino, index, off);
 	if (ret < 0) {
 		log_debug("fs_rpc_inode_truncate_recv(): i_ino=%ld index=%d %s",
 			  i_ino, index, strerror(errno));
@@ -624,7 +627,7 @@ fs_rpc_inode_truncate_recv(void *arg, const void *header, size_t header_length,
 static int
 fs_rpc_inode_write_internal(uint64_t i_ino, uint64_t index, off_t offset,
 			    size_t size, const void *buf, ucp_ep_h reply_ep,
-			    void *handle)
+			    void *handle, struct fs_ctx *fs)
 {
 	iov_req_t *user_data =
 	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
@@ -637,7 +640,7 @@ fs_rpc_inode_write_internal(uint64_t i_ino, uint64_t index, off_t offset,
 	user_data->iov[1].length = sizeof(ssize_t);
 
 	*(ssize_t *)user_data->iov[1].buffer =
-	    fs_inode_write(i_ino, index, offset, size, buf);
+	    fs_inode_write(fs, i_ino, index, offset, size, buf);
 	if (*(ssize_t *)user_data->iov[1].buffer < 0) {
 		*(int *)(user_data->iov[0].buffer) = -errno;
 	} else {
@@ -664,7 +667,7 @@ fs_rpc_write_rndv_cb(void *request, ucs_status_t status, size_t length,
 	int ret;
 	ret = fs_rpc_inode_write_internal(
 	    header->i_ino, header->index, header->offset, req_rndv->size,
-	    req_rndv->buf, req_rndv->reply_ep, header->handle);
+	    req_rndv->buf, req_rndv->reply_ep, header->handle, req_rndv->fs);
 	if (ret) {
 		log_error("fs_rpc_inode_write_internal() failed");
 	}
@@ -692,6 +695,7 @@ fs_rpc_inode_write_recv(void *arg, const void *header, size_t header_length,
 		user_data->size = length;
 		user_data->buf = malloc(length);
 		user_data->reply_ep = param->reply_ep;
+		user_data->fs = ctx->fs;
 		ucp_request_param_t rparam = {
 		    .op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE |
 				    UCP_OP_ATTR_FIELD_CALLBACK |
@@ -722,9 +726,9 @@ fs_rpc_inode_write_recv(void *arg, const void *header, size_t header_length,
 	} else {
 		log_debug("fs_rpc_inode_write_recv() eager start");
 		int ret;
-		ret = fs_rpc_inode_write_internal(hdr->i_ino, hdr->index,
-						  hdr->offset, length, data,
-						  param->reply_ep, hdr->handle);
+		ret = fs_rpc_inode_write_internal(
+		    hdr->i_ino, hdr->index, hdr->offset, length, data,
+		    param->reply_ep, hdr->handle, ctx->fs);
 		if (ret) {
 			log_error("fs_rpc_inode_write_internal() failed");
 		}
@@ -760,8 +764,8 @@ fs_rpc_inode_read_recv(void *arg, const void *header, size_t header_length,
 	    .user_data = user_data,
 	};
 
-	rhdr->size = fs_inode_read(rhdr->i_ino, rhdr->index, rhdr->offset,
-				   rhdr->size, user_data->buf);
+	rhdr->size = fs_inode_read(ctx->fs, rhdr->i_ino, rhdr->index,
+				   rhdr->offset, rhdr->size, user_data->buf);
 	if (rhdr->size < 0) {
 		log_error("fs_inode_read() failed: %s", strerror(errno));
 		rhdr->ret = -errno;
@@ -970,8 +974,8 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 }
 
 int
-fs_server_init(char *db_dir, int rank, int nprocs, int trank, int nthreads,
-	       int *shutdown)
+fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
+	       int nthreads, int *shutdown)
 {
 	if (trank >= MAX_NTHREADS) {
 		log_error("fs_server_init() trank=%d >= MAX_NTHREADS=%d", trank,
@@ -1159,7 +1163,7 @@ fs_server_init(char *db_dir, int rank, int nprocs, int trank, int nthreads,
 		return (-1);
 	}
 
-	fs_inode_init(db_dir);
+	ctx->fs = fs_inode_init(db_dir, db_size, trank);
 	return (0);
 }
 
@@ -1192,6 +1196,7 @@ fs_server_term(int trank)
 	free_meta_tree(&ctx->root);
 	ucp_worker_destroy(ctx->ucp_worker);
 	ucp_cleanup(ctx->ucp_context);
+	fs_inode_term(ctx->fs);
 	return (0);
 }
 

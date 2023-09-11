@@ -17,6 +17,19 @@ LT_INIT
 PKG_CHECK_MODULES([MPI], [ompi])
 PKG_CHECK_MODULES([UCX], [ucx])
 
+AC_MSG_CHECKING([pmemkv])
+AC_ARG_WITH([pmemkv],
+  [AS_HELP_STRING([--with-pmemkv],
+    [use pmemkv @<:@default=no@:>@])],
+  [], [with_pmemkv=no])
+AC_MSG_RESULT([$with_pmemkv])
+AM_CONDITIONAL([USE_PMEMKV], [test x$with_pmemkv != xno])
+if test x$with_pmemkv != xno; then
+  AC_DEFINE([USE_PMEMKV], [1], [Use pmemkv])
+  PKG_CHECK_MODULES([LIBPMEM], [libpmem])
+  PKG_CHECK_MODULES([LIBPMEMKV], [libpmemkv])
+fi
+
 # Checks for header files.
 AC_CHECK_HEADERS([stdlib.h string.h unistd.h stdint.h])
 

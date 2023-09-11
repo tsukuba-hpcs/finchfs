@@ -178,7 +178,7 @@ TEST(FinchfsTest, Read2)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create_chunk_size("/read1", 0, S_IRWXU, (1 << 24));
+	fd = finchfs_create_chunk_size("/read2", 0, S_IRWXU, (1 << 24));
 	EXPECT_EQ(fd, 0);
 	char *buf;
 	char *buf2;
@@ -189,7 +189,7 @@ TEST(FinchfsTest, Read2)
 	n = finchfs_write(fd, buf, (1 << 24));
 	EXPECT_EQ(n, 1 << 24);
 	finchfs_close(fd);
-	fd = finchfs_open("/read1", 0);
+	fd = finchfs_open("/read2", 0);
 	EXPECT_EQ(fd, 0);
 	n = finchfs_read(fd, buf2, (1 << 24));
 	EXPECT_EQ(n, (1 << 24));

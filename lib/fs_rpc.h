@@ -36,8 +36,8 @@ int fs_rpc_dir_move(const char *oldpath, const char *newpath);
 int fs_client_init(char *addrfile);
 int fs_client_term(void);
 
-int fs_server_init(char *db_dir, int rank, int nprocs, int trank, int nthreads,
-		   int *shutdown);
+int fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs,
+		   int trank, int nthreads, int *shutdown);
 int fs_server_get_address(int trank, void **addr, size_t *addr_len);
 void fs_server_release_address(int trank, void *addr);
 int fs_server_term(int trank);

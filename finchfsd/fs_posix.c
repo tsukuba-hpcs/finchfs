@@ -13,8 +13,12 @@
 
 #define INODE_SPLIT_SIZE 1023
 
-void
-fs_inode_init(char *db_dir)
+struct fs_ctx {
+	char db_dir[128];
+};
+
+struct fs_ctx *
+fs_inode_init(char *db_dir, size_t db_size, int trank)
 {
 	int ret;
 	ret = chdir(db_dir);
@@ -36,11 +40,20 @@ fs_inode_init(char *db_dir)
 		}
 	}
 	log_debug("fs_inode_init() called db_dir=%s", db_dir);
+	struct fs_ctx *ctx = malloc(sizeof(struct fs_ctx));
+	strcpy(ctx->db_dir, db_dir);
+	return (ctx);
+}
+
+void
+fs_inode_term(struct fs_ctx *ctx)
+{
+	free(ctx);
 }
 
 ssize_t
-fs_inode_write(uint64_t i_ino, uint64_t index, off_t offset, size_t size,
-	       const void *buf)
+fs_inode_write(struct fs_ctx *ctx, uint64_t i_ino, uint64_t index, off_t offset,
+	       size_t size, const void *buf)
 {
 	log_debug("fs_inode_write() called i_ino=%lu index=%lu offset=%ld "
 		  "size=%zu",
@@ -67,8 +80,8 @@ fs_inode_write(uint64_t i_ino, uint64_t index, off_t offset, size_t size,
 }
 
 ssize_t
-fs_inode_read(uint64_t i_ino, uint64_t index, off_t offset, size_t size,
-	      void *buf)
+fs_inode_read(struct fs_ctx *ctx, uint64_t i_ino, uint64_t index, off_t offset,
+	      size_t size, void *buf)
 {
 	log_debug(
 	    "fs_inode_read() called i_ino=%lu index=%lu offset=%ld size=%zu",
@@ -94,7 +107,8 @@ fs_inode_read(uint64_t i_ino, uint64_t index, off_t offset, size_t size,
 }
 
 int
-fs_inode_truncate(uint64_t i_ino, uint64_t index, off_t offset)
+fs_inode_truncate(struct fs_ctx *ctx, uint64_t i_ino, uint64_t index,
+		  off_t offset)
 {
 	log_debug("fs_inode_truncate() called i_ino=%lu index=%lu", i_ino,
 		  index);
