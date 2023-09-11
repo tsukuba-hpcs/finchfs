@@ -28,7 +28,7 @@ fs_inode_init(char *db_dir, size_t db_size, int trank)
 	snprintf(dir, sizeof(dir), db_dir, trank);
 	char path[128];
 	snprintf(path, sizeof(path), "%s/kv.db", dir);
-	if (stat(db_dir, &st)) {
+	if (stat(dir, &st)) {
 		log_fatal("%s: %s", db_dir, strerror(errno));
 	}
 	if (S_ISDIR(st.st_mode)) {
