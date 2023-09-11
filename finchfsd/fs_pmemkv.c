@@ -20,6 +20,7 @@ struct fs_ctx *
 fs_inode_init(char *db_dir, size_t db_size, int trank)
 {
 	int s;
+	struct stat st;
 	struct fs_ctx *ctx = malloc(sizeof(struct fs_ctx));
 	ctx->db = NULL;
 	pmemkv_config *cfg = pmemkv_config_new();
@@ -27,6 +28,12 @@ fs_inode_init(char *db_dir, size_t db_size, int trank)
 	snprintf(dir, sizeof(dir), db_dir, trank);
 	char path[128];
 	snprintf(path, sizeof(path), "%s/kv.db", dir);
+	if (stat(db_dir, &st)) {
+		log_fatal("%s: %s", db_dir, strerror(errno));
+	}
+	if (S_ISDIR(st.st_mode)) {
+		strcpy(path, dir);
+	}
 	log_debug("fs_inode_init() called db_dir=%s trank=%d", path, trank);
 
 	if ((s = pmemkv_config_put_path(cfg, path)) != PMEMKV_STATUS_OK) {
