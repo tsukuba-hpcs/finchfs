@@ -31,7 +31,7 @@ fs_inode_init(char *db_dir, size_t db_size, int trank)
 	if (stat(dir, &st)) {
 		log_fatal("%s: %s", db_dir, strerror(errno));
 	}
-	if (S_ISDIR(st.st_mode)) {
+	if (!S_ISDIR(st.st_mode)) {
 		strcpy(path, dir);
 	}
 	log_debug("fs_inode_init() called db_dir=%s trank=%d", path, trank);
