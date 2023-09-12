@@ -119,6 +119,7 @@ fs_inode_write(struct fs_ctx *ctx, uint64_t i_ino, uint64_t index, off_t offset,
 			memcpy(arg.newbuf + arg.offset, arg.buf, arg.size);
 			s = pmemkv_put(ctx->db, key, strlen(key), arg.newbuf,
 				       arg.size + arg.offset);
+			free(arg.newbuf);
 			if (s == PMEMKV_STATUS_OUT_OF_MEMORY) {
 				errno = ENOMEM;
 				return (-1);
