@@ -1,7 +1,7 @@
 typedef struct {
 	size_t chunk_size;
 	uint64_t i_ino;
-	uint64_t mode;
+	mode_t mode;
 	struct timespec mtime, ctime;
 	size_t size;
 } fs_stat_t;
@@ -32,7 +32,7 @@ typedef struct {
 typedef struct {
 	size_t chunk_size;
 	uint64_t i_ino;
-	uint64_t mode;
+	mode_t mode;
 	struct timespec mtime, ctime;
 	size_t size;
 	int path_len;
