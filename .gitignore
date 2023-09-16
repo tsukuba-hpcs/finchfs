@@ -28,6 +28,9 @@ ar-lib
 libtool
 ltmain.sh
 tests/finchfs_test
+tests/*.o
+tests/*.a
+tests/find_test
 finchfsd/.deps
 finchfsd/.libs
 finchfsd/finchfsd
