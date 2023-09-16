@@ -248,6 +248,59 @@ TEST(FIND_TEST, PARENTHESIS_TEST_2)
 	EXPECT_EQ(*(int64_t *)nsec->l->right->c->value, 453303489);
 }
 
+TEST(FIND_TEST, PARENTHESIS_TEST_3)
+{
+	const char q[] =
+	    "name == \"*01*\" && (mtim.tv_sec < 1558682399 || "
+	    "(mtim.tv_sec == 1558682399 && mtim.tv_nsec < 453303489)) && "
+	    "size == 3901";
+	find_condition_t *n;
+	char *next = NULL;
+	n = build_condition(q, &next, NULL, (find_logical_t)0);
+	ASSERT_TRUE(n != NULL);
+	ASSERT_TRUE(n->c == NULL);
+	EXPECT_EQ(n->l->op, FIND_LOGICAL_AND);
+	find_condition_t *nmtim = n->l->left;
+	ASSERT_TRUE(nmtim != NULL);
+	ASSERT_TRUE(nmtim->c == NULL);
+	EXPECT_EQ(nmtim->l->op, FIND_LOGICAL_AND);
+	ASSERT_TRUE(nmtim->l->left != NULL);
+	ASSERT_TRUE(nmtim->l->right != NULL);
+	ASSERT_TRUE(nmtim->l->left->c != NULL);
+	EXPECT_EQ(nmtim->l->left->c->op, FIND_COMP_EQ);
+	EXPECT_EQ(nmtim->l->left->c->attr, FIND_ATTR_NAME);
+	EXPECT_STREQ((char *)nmtim->l->left->c->value, "*01*");
+	find_condition_t *mtim = nmtim->l->right;
+	ASSERT_TRUE(mtim != NULL);
+	ASSERT_TRUE(mtim->c == NULL);
+	EXPECT_EQ(mtim->l->op, FIND_LOGICAL_OR);
+	ASSERT_TRUE(mtim->l->left != NULL);
+	ASSERT_TRUE(mtim->l->right != NULL);
+	ASSERT_TRUE(mtim->l->left->c != NULL);
+	EXPECT_EQ(mtim->l->left->c->op, FIND_COMP_LT);
+	EXPECT_EQ(mtim->l->left->c->attr, FIND_ATTR_MTIM_TVSEC);
+	EXPECT_EQ(*(time_t *)mtim->l->left->c->value, 1558682399);
+	find_condition_t *nsec = mtim->l->right;
+	ASSERT_TRUE(nsec->l != NULL);
+	EXPECT_EQ(nsec->l->op, FIND_LOGICAL_AND);
+	ASSERT_TRUE(nsec->l->left != NULL);
+	ASSERT_TRUE(nsec->l->right != NULL);
+	ASSERT_TRUE(nsec->l->left->c != NULL);
+	ASSERT_TRUE(nsec->l->right->c != NULL);
+	EXPECT_EQ(nsec->l->left->c->op, FIND_COMP_EQ);
+	EXPECT_EQ(nsec->l->right->c->op, FIND_COMP_LT);
+	EXPECT_EQ(nsec->l->left->c->attr, FIND_ATTR_MTIM_TVSEC);
+	EXPECT_EQ(nsec->l->right->c->attr, FIND_ATTR_MTIM_TVNSEC);
+	EXPECT_EQ(*(time_t *)nsec->l->left->c->value, 1558682399);
+	EXPECT_EQ(*(int64_t *)nsec->l->right->c->value, 453303489);
+	find_condition_t *size = n->l->right;
+	ASSERT_TRUE(size != NULL);
+	ASSERT_TRUE(size->c != NULL);
+	EXPECT_EQ(size->c->op, FIND_COMP_EQ);
+	EXPECT_EQ(size->c->attr, FIND_ATTR_SIZE);
+	EXPECT_EQ(*(uint64_t *)size->c->value, 3901);
+}
+
 int
 main(int argc, char **argv)
 {
