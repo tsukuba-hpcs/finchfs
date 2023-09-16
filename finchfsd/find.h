@@ -47,7 +47,7 @@ typedef struct find_condition {
 } find_condition_t;
 
 find_comp_node_t *build_comp_node(const char *str, char **next);
-find_logical_node_t *build_logical_node(const char *str, char **next);
-find_condition_t *build_condition(const char *str, char **next);
+find_condition_t *build_condition(const char *str, char **next,
+				  find_condition_t *left, find_logical_t lop);
 
 #endif
