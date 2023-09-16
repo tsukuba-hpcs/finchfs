@@ -16,6 +16,8 @@ TEST(FIND_TEST, COMP_TEST_1)
 	EXPECT_EQ(n->op, FIND_COMP_EQ);
 	EXPECT_EQ(n->attr, FIND_ATTR_NAME);
 	EXPECT_STREQ((char *)n->value, "*01*");
+	free(n->value);
+	free(n);
 }
 
 TEST(FIND_TEST, COMP_TEST_2)
@@ -28,6 +30,8 @@ TEST(FIND_TEST, COMP_TEST_2)
 	EXPECT_EQ(n->op, FIND_COMP_LT);
 	EXPECT_EQ(n->attr, FIND_ATTR_MTIM_TVSEC);
 	EXPECT_EQ(*(time_t *)n->value, 1558682399);
+	free(n->value);
+	free(n);
 }
 
 TEST(FIND_TEST, COMP_TEST_3)
@@ -40,6 +44,8 @@ TEST(FIND_TEST, COMP_TEST_3)
 	EXPECT_EQ(n->op, FIND_COMP_EQ);
 	EXPECT_EQ(n->attr, FIND_ATTR_MTIM_TVSEC);
 	EXPECT_EQ(*(time_t *)n->value, 1558682399);
+	free(n->value);
+	free(n);
 }
 
 TEST(FIND_TEST, COMP_TEST_4)
@@ -52,6 +58,8 @@ TEST(FIND_TEST, COMP_TEST_4)
 	EXPECT_EQ(n->op, FIND_COMP_EQ);
 	EXPECT_EQ(n->attr, FIND_ATTR_MTIM_TVNSEC);
 	EXPECT_EQ(*(int64_t *)n->value, 453303489);
+	free(n->value);
+	free(n);
 }
 
 TEST(FIND_TEST, COMP_TEST_5)
@@ -64,6 +72,8 @@ TEST(FIND_TEST, COMP_TEST_5)
 	EXPECT_EQ(n->op, FIND_COMP_EQ);
 	EXPECT_EQ(n->attr, FIND_ATTR_SIZE);
 	EXPECT_EQ(*(uint64_t *)n->value, 3901);
+	free(n->value);
+	free(n);
 }
 
 TEST(FIND_TEST, COMP_TEST_6)
@@ -76,6 +86,8 @@ TEST(FIND_TEST, COMP_TEST_6)
 	EXPECT_EQ(n->op, FIND_COMP_EQ);
 	EXPECT_EQ(n->attr, FIND_ATTR_NAME);
 	EXPECT_STREQ((char *)n->value, "*01*");
+	free(n->value);
+	free(n);
 }
 
 TEST(FIND_TEST, COMP_TEST_7)
@@ -88,6 +100,8 @@ TEST(FIND_TEST, COMP_TEST_7)
 	EXPECT_EQ(n->op, FIND_COMP_LT);
 	EXPECT_EQ(n->attr, FIND_ATTR_MTIM_TVSEC);
 	EXPECT_EQ(*(time_t *)n->value, 1558682399);
+	free(n->value);
+	free(n);
 }
 
 TEST(FIND_TEST, COMP_TEST_8)
@@ -100,6 +114,8 @@ TEST(FIND_TEST, COMP_TEST_8)
 	EXPECT_EQ(n->op, FIND_COMP_EQ);
 	EXPECT_EQ(n->attr, FIND_ATTR_MTIM_TVSEC);
 	EXPECT_EQ(*(time_t *)n->value, 1558682399);
+	free(n->value);
+	free(n);
 }
 
 TEST(FIND_TEST, COMP_TEST_9)
@@ -112,6 +128,8 @@ TEST(FIND_TEST, COMP_TEST_9)
 	EXPECT_EQ(n->op, FIND_COMP_EQ);
 	EXPECT_EQ(n->attr, FIND_ATTR_MTIM_TVNSEC);
 	EXPECT_EQ(*(int64_t *)n->value, 453303489);
+	free(n->value);
+	free(n);
 }
 
 TEST(FIND_TEST, COMP_TEST_10)
@@ -124,6 +142,8 @@ TEST(FIND_TEST, COMP_TEST_10)
 	EXPECT_EQ(n->op, FIND_COMP_EQ);
 	EXPECT_EQ(n->attr, FIND_ATTR_SIZE);
 	EXPECT_EQ(*(uint64_t *)n->value, 3901);
+	free(n->value);
+	free(n);
 }
 
 TEST(FIND_TEST, COND_TEST_1)
@@ -145,6 +165,7 @@ TEST(FIND_TEST, COND_TEST_1)
 	EXPECT_EQ(n->l->right->c->attr, FIND_ATTR_SIZE);
 	EXPECT_STREQ((char *)n->l->left->c->value, "foo");
 	EXPECT_EQ(*(uint64_t *)n->l->right->c->value, 3901);
+	free_condition(n);
 }
 
 TEST(FIND_TEST, COND_TEST_2)
@@ -166,6 +187,7 @@ TEST(FIND_TEST, COND_TEST_2)
 	EXPECT_EQ(n->l->right->c->attr, FIND_ATTR_SIZE);
 	EXPECT_EQ(*(uint64_t *)n->l->left->c->value, 12345);
 	EXPECT_EQ(*(uint64_t *)n->l->right->c->value, 3901);
+	free_condition(n);
 }
 
 TEST(FIND_TEST, PARENTHESIS_TEST_1)
@@ -196,6 +218,7 @@ TEST(FIND_TEST, PARENTHESIS_TEST_1)
 	EXPECT_EQ(n->l->right->l->right->c->attr, FIND_ATTR_MTIM_TVNSEC);
 	EXPECT_EQ(*(time_t *)n->l->right->l->left->c->value, 1558682399);
 	EXPECT_EQ(*(int64_t *)n->l->right->l->right->c->value, 453303489);
+	free_condition(n);
 }
 
 TEST(FIND_TEST, PARENTHESIS_TEST_2)
@@ -246,6 +269,7 @@ TEST(FIND_TEST, PARENTHESIS_TEST_2)
 	EXPECT_EQ(nsec->l->right->c->attr, FIND_ATTR_MTIM_TVNSEC);
 	EXPECT_EQ(*(time_t *)nsec->l->left->c->value, 1558682399);
 	EXPECT_EQ(*(int64_t *)nsec->l->right->c->value, 453303489);
+	free_condition(n);
 }
 
 TEST(FIND_TEST, PARENTHESIS_TEST_3)
@@ -299,6 +323,7 @@ TEST(FIND_TEST, PARENTHESIS_TEST_3)
 	EXPECT_EQ(size->c->op, FIND_COMP_EQ);
 	EXPECT_EQ(size->c->attr, FIND_ATTR_SIZE);
 	EXPECT_EQ(*(uint64_t *)size->c->value, 3901);
+	free_condition(n);
 }
 
 int

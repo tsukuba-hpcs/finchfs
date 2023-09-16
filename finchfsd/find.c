@@ -371,3 +371,18 @@ build_condition(const char *str, char **next, find_condition_t *left,
 	*next = t;
 	return (build_condition(t, next, root, op));
 }
+
+void
+free_condition(find_condition_t *cond)
+{
+	if (cond->c != NULL) {
+		free(cond->c->value);
+		free(cond->c);
+		free(cond);
+		return;
+	}
+	free_condition(cond->l->left);
+	free_condition(cond->l->right);
+	free(cond->l);
+	free(cond);
+}
