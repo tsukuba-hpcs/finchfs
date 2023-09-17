@@ -543,7 +543,7 @@ path_to_target_hash(const char *path, int div)
 		}
 	}
 	for (char *p = head + slash + 1; *p != '\0'; p = next) {
-		n = strtol(p, &next, 0);
+		n = strtol(p, &next, 10);
 		if (next == p) {
 			h += *p;
 			next++;
