@@ -33,6 +33,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include "tree.h"
 #include "fs.h"
 #include "log.h"
+#include "find.h"
 
 #define MAX_NTHREADS 128
 
@@ -973,6 +974,179 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 	return (status);
 }
 
+typedef struct {
+	find_condition_t *cond;
+	int recursive;
+	int return_path;
+	size_t entry_count;
+	find_header_t *header;
+	size_t header_length;
+	ucp_ep_h reply_ep;
+} find_param_t;
+
+static void
+fs_rpc_find_internal(iov_req_t **user_data, entry_t *dir, char *path,
+		     find_param_t *param)
+{
+	log_debug("fs_rpc_find_internal() called path=%s", path);
+	entry_t *child;
+	char npath[256];
+	ucs_status_t status;
+
+	RB_FOREACH(child, entrytree, &dir->entries)
+	{
+		snprintf(npath, sizeof(npath), "%s/%s", path, child->name);
+		if (param->recursive && S_ISDIR(child->mode)) {
+			fs_rpc_find_internal(user_data, child, npath, param);
+		}
+		fs_stat_t st = {
+		    .chunk_size = child->chunk_size,
+		    .i_ino = child->i_ino,
+		    .mode = child->mode,
+		    .mtime = child->mtime,
+		    .ctime = child->ctime,
+		    .size = child->size,
+		};
+		find_header_t *rhdr = (find_header_t *)(*user_data)->header;
+		rhdr->total_nentries++;
+		if (!eval_condition(param->cond, npath, &st)) {
+			continue;
+		}
+		rhdr->match_nentries++;
+		if (param->return_path) {
+			find_entry_t *ent =
+			    malloc(sizeof(find_entry_t) + strlen(npath) + 1);
+			ent->path_len = strlen(npath) + 1;
+			strcpy(ent->path, npath);
+			(*user_data)->iov[(*user_data)->n].buffer = ent;
+			(*user_data)->iov[(*user_data)->n].length =
+			    sizeof(find_entry_t) + ent->path_len;
+			(*user_data)->n++;
+			rhdr->entry_count++;
+			if ((*user_data)->n == param->entry_count) {
+				rhdr->ret = FINCH_INPROGRESS;
+				log_debug("fs_rpc_find_internal() sending "
+					  "count=%d",
+					  rhdr->entry_count);
+				status = post_iov_req(param->reply_ep,
+						      RPC_FIND_REP, *user_data,
+						      param->header_length);
+				if (status != UCS_OK) {
+					log_error("post_iov_req() failed");
+				}
+				*user_data = malloc(sizeof(iov_req_t) +
+						    sizeof(ucp_dt_iov_t) *
+							param->entry_count);
+				(*user_data)->header =
+				    malloc(param->header_length);
+				memcpy((*user_data)->header, param->header,
+				       param->header_length);
+				rhdr = (find_header_t *)(*user_data)->header;
+				rhdr->ret = FINCH_OK;
+				rhdr->entry_count = 0;
+				rhdr->total_nentries = 0;
+				rhdr->match_nentries = 0;
+				(*user_data)->n = 0;
+			}
+		}
+	}
+}
+
+ucs_status_t
+fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
+		 void *data, size_t length, const ucp_am_recv_param_t *param)
+{
+	struct worker_ctx *ctx = (struct worker_ctx *)arg;
+	int path_len;
+	char *path;
+	int query_len;
+	char *query;
+	int recursive;
+	int return_path;
+	size_t offset = 0;
+	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(path_len);
+	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += path_len;
+	query_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(query_len);
+	query = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += query_len;
+	recursive = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(recursive);
+	return_path = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	find_header_t *hdr = (find_header_t *)header;
+
+	log_debug("fs_rpc_find_recv() called path=%s query=%s recursive=%d "
+		  "return_path=%d",
+		  path, query, recursive, return_path);
+
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * hdr->entry_count);
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	find_header_t *rhdr = (find_header_t *)user_data->header;
+	rhdr->ret = FINCH_OK;
+	rhdr->entry_count = 0;
+	rhdr->total_nentries = 0;
+	rhdr->match_nentries = 0;
+	user_data->n = 0;
+
+	entry_t *dir = get_dir_entry(path, ctx);
+	ucs_status_t status;
+	if (dir == NULL) {
+		if (errno == ENOENT) {
+			log_debug("fs_rpc_find_recv() path=%s does not exist",
+				  path);
+			rhdr->ret = FINCH_ENOENT;
+		} else {
+			log_debug("fs_rpc_find_recv() path=%s is not a "
+				  "directory",
+				  path);
+			rhdr->ret = FINCH_ENOTDIR;
+		}
+		user_data->iov[user_data->n].buffer = malloc(1);
+		user_data->iov[user_data->n].length = 1;
+		user_data->n++;
+		status = post_iov_req(param->reply_ep, RPC_FIND_REP, user_data,
+				      header_length);
+		return (status);
+	}
+	char *next;
+	find_condition_t *cond = build_condition(query, &next, NULL, 0);
+	if (cond == NULL) {
+		log_error("fs_rpc_find_recv() failed to build condition");
+		rhdr->ret = FINCH_EINVAL;
+		user_data->iov[user_data->n].buffer = malloc(1);
+		user_data->iov[user_data->n].length = 1;
+		user_data->n++;
+		status = post_iov_req(param->reply_ep, RPC_FIND_REP, user_data,
+				      header_length);
+		return (status);
+	}
+	find_param_t fparam = {
+	    .cond = cond,
+	    .recursive = recursive,
+	    .return_path = return_path,
+	    .entry_count = hdr->entry_count,
+	    .header = hdr,
+	    .header_length = header_length,
+	    .reply_ep = param->reply_ep,
+	};
+	fs_rpc_find_internal(&user_data, dir, path, &fparam);
+	free_condition(cond);
+	if (user_data->n == 0) {
+		user_data->iov[user_data->n].buffer = malloc(1);
+		user_data->iov[user_data->n].length = 1;
+		user_data->n++;
+	}
+	log_debug("fs_rpc_find_recv() sending count=%d",
+		  ((find_header_t *)user_data->header)->entry_count);
+	status = post_iov_req(param->reply_ep, RPC_FIND_REP, user_data,
+			      header_length);
+	return (status);
+}
+
 int
 fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 	       int nthreads, int *shutdown)
@@ -1157,9 +1331,22 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
 		 ctx->ucp_worker, &readdir_param)) != UCS_OK) {
-		log_error(
-		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
-		    ucs_status_string(status));
+		log_error("ucp_worker_set_am_recv_handler(readdir) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t find_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_FIND_REQ,
+	    .cb = fs_rpc_find_recv,
+	    .arg = ctx,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(ctx->ucp_worker,
+						     &find_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(find) failed: %s",
+			  ucs_status_string(status));
 		return (-1);
 	}
 

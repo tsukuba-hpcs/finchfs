@@ -14,6 +14,8 @@
 #define RPC_INODE_TRUNCATE_REQ 0x0e
 #define RPC_READDIR_REQ 0x0f
 #define RPC_READDIR_REP 0x10
+#define RPC_FIND_REQ 0x11
+#define RPC_FIND_REP 0x12
 
 int fs_rpc_mkdir(const char *path, mode_t mode);
 int fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
@@ -32,6 +34,9 @@ int fs_rpc_readdir(const char *path, void *arg,
 int fs_rpc_inode_unlink(const char *path, uint64_t *i_ino);
 int fs_rpc_inode_unlink_all(const char *path);
 int fs_rpc_dir_move(const char *oldpath, const char *newpath);
+int fs_rpc_find(const char *path, const char *query,
+		struct finchfs_find_param *param, void *arg,
+		void (*filler)(void *, const char *));
 
 int fs_client_init(char *addrfile);
 int fs_client_term(void);

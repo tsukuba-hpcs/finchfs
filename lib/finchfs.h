@@ -18,3 +18,12 @@ int finchfs_stat(const char *path, struct stat *st);
 int finchfs_readdir(const char *path, void *buf,
 		    void (*filler)(void *, const char *, const struct stat *));
 int finchfs_rename(const char *oldpath, const char *newpath);
+struct finchfs_find_param {
+	int recursive;
+	int return_path;
+	size_t total_nentries;
+	size_t match_nentries;
+};
+int finchfs_find(const char *path, const char *query,
+		 struct finchfs_find_param *param, void *buf,
+		 void (*filler)(void *, const char *));

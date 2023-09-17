@@ -490,3 +490,16 @@ finchfs_rename(const char *oldpath, const char *newpath)
 	free(newp);
 	return (ret);
 }
+
+int
+finchfs_find(const char *path, const char *query,
+	     struct finchfs_find_param *param, void *buf,
+	     void (*filler)(void *, const char *))
+{
+	log_debug("finchfs_find() called path=%s query=%s", path, query);
+	int ret;
+	char *p = canonical_path(path);
+	ret = fs_rpc_find(p, query, param, buf, filler);
+	free(p);
+	return (ret);
+}

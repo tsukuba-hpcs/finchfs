@@ -39,6 +39,19 @@ typedef struct {
 	char path[];
 } readdir_entry_t;
 
+typedef struct {
+	void *handle;
+	size_t entry_count;
+	int ret;
+	size_t total_nentries;
+	size_t match_nentries;
+} find_header_t;
+
+typedef struct {
+	int path_len;
+	char path[];
+} find_entry_t;
+
 /* Number of 512B blocks */
 #define NUM_BLOCKS(size) ((size + 511) / 512)
 
@@ -49,4 +62,5 @@ typedef enum {
 	FINCH_EIO = -5,
 	FINCH_EEXIST = -17,
 	FINCH_ENOTDIR = -20,
+	FINCH_EINVAL = -22,
 } finch_status_t;

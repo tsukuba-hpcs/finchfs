@@ -236,6 +236,39 @@ fs_rpc_readdir_reply(void *arg, const void *header, size_t header_length,
 	return (UCS_OK);
 }
 
+typedef struct {
+	int ret;
+	size_t total_nentries;
+	size_t match_nentries;
+	void *arg;
+	void (*filler)(void *, const char *);
+	find_header_t header;
+} find_handle_t;
+
+ucs_status_t
+fs_rpc_find_reply(void *arg, const void *header, size_t header_length,
+		  void *data, size_t length, const ucp_am_recv_param_t *param)
+{
+	find_header_t *hdr = (find_header_t *)header;
+	find_handle_t *handle = hdr->handle;
+	log_debug(
+	    "fs_rpc_find_reply: total_nentries=%zu match_nentries=%zu ret=%d",
+	    hdr->total_nentries, hdr->match_nentries, hdr->ret);
+	size_t offset = 0;
+	if (hdr->ret == FINCH_OK || hdr->ret == FINCH_INPROGRESS) {
+		for (int i = 0; i < hdr->entry_count; i++) {
+			find_entry_t *ent =
+			    (find_entry_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+			offset += sizeof(find_entry_t) + ent->path_len;
+			handle->filler(handle->arg, ent->path);
+		}
+		handle->total_nentries += hdr->total_nentries;
+		handle->match_nentries += hdr->match_nentries;
+	}
+	handle->ret = hdr->ret;
+	return (UCS_OK);
+}
+
 static void
 ep_err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 {
@@ -411,6 +444,20 @@ fs_client_init(char *addrfile)
 	if ((status = ucp_worker_set_am_recv_handler(
 		 env.ucp_worker, &readdir_reply_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(readdir) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t find_reply_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_FIND_REP,
+	    .cb = fs_rpc_find_reply,
+	    .arg = NULL,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 env.ucp_worker, &find_reply_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(find) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}
@@ -1411,5 +1458,113 @@ fs_rpc_dir_move(const char *oldpath, const char *newpath)
 	}
 	free(ret);
 	log_debug("fs_rpc_dir_move: succeeded");
+	return (r);
+}
+
+int
+fs_rpc_find(const char *path, const char *query,
+	    struct finchfs_find_param *param, void *arg,
+	    void (*filler)(void *, const char *))
+{
+	int path_len = strlen(path) + 1;
+	int query_len = strlen(query) + 1;
+	ucp_dt_iov_t iov[6];
+	iov[0].buffer = &path_len;
+	iov[0].length = sizeof(path_len);
+	iov[1].buffer = (void *)path;
+	iov[1].length = path_len;
+	iov[2].buffer = &query_len;
+	iov[2].length = sizeof(query_len);
+	iov[3].buffer = (void *)query;
+	iov[3].length = query_len;
+	iov[4].buffer = &param->recursive;
+	iov[4].length = sizeof(param->recursive);
+	iov[5].buffer = &param->return_path;
+	iov[5].length = sizeof(param->recursive);
+
+	find_handle_t *handles = malloc(sizeof(find_handle_t) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		handles[i].ret = FINCH_INPROGRESS;
+		handles[i].arg = arg;
+		handles[i].filler = filler;
+		handles[i].header.handle = &handles[i];
+		handles[i].header.entry_count = param->recursive ? 1024 : 1;
+		handles[i].total_nentries = 0;
+		handles[i].match_nentries = 0;
+	}
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
+
+	for (int i = 0; i < env.nvprocs; i++) {
+		reqs[i] = ucp_am_send_nbx(
+		    env.ucp_eps[i], RPC_FIND_REQ, &handles[i].header,
+		    sizeof(handles[i].header), iov, 6, &rparam);
+	}
+	while (!all_req_finish(reqs, env.nvprocs)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	int nokreq = 0;
+	int *okidx = malloc(sizeof(int) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		if (reqs[i] == NULL) {
+			okidx[nokreq++] = i;
+			continue;
+		}
+		ucs_status_t status = ucp_request_check_status(reqs[i]);
+		if (status != UCS_OK) {
+			log_error("fs_rpc_find: ucp_am_send_nbx() failed "
+				  "at %d: %s",
+				  i, ucs_status_string(status));
+		} else {
+			okidx[nokreq++] = i;
+		}
+		ucp_request_free(reqs[i]);
+	}
+	if (nokreq < env.nvprocs) {
+		log_error("fs_rpc_find: ucp_am_send_nbx() failed");
+	} else {
+		log_debug("fs_rpc_find: ucp_am_send_nbx() succeeded");
+	}
+	free(reqs);
+	int **rets = malloc(sizeof(int *) * nokreq);
+	for (int i = 0; i < nokreq; i++) {
+		rets[i] = &handles[okidx[i]].ret;
+	}
+	while (!all_ret_finish(rets, nokreq)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	free(okidx);
+	free(rets);
+	if (nokreq < env.nvprocs) {
+		free(handles);
+		log_error("fs_rpc_find_wait failed nokreq=%d nreqs=%d", nokreq,
+			  env.nvprocs);
+		return (-1);
+	}
+	int r = 0;
+	for (int i = 0; i < env.nvprocs; i++) {
+		if (handles[i].ret != FINCH_OK) {
+			log_error("fs_rpc_find: find() failed at %d: %s", i,
+				  strerror(-handles[i].ret));
+			errno = -handles[i].ret;
+			r = -1;
+		}
+	}
+	if (r == 0) {
+		param->total_nentries = 0;
+		param->match_nentries = 0;
+		for (int i = 0; i < env.nvprocs; i++) {
+			param->total_nentries += handles[i].total_nentries;
+			param->match_nentries += handles[i].match_nentries;
+		}
+	}
+	free(handles);
 	return (r);
 }
