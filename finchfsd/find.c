@@ -3,7 +3,9 @@
 #include <string.h>
 #include <fcntl.h>
 #include <time.h>
+#include <fnmatch.h>
 #include "log.h"
+#include "fs_types.h"
 #include "find.h"
 
 char *
@@ -417,4 +419,332 @@ free_condition(find_condition_t *cond)
 	free_condition(cond->l->right);
 	free(cond->l);
 	free(cond);
+}
+
+int
+eval_condition(find_condition_t *cond, const char *path, fs_stat_t *st)
+{
+	if (cond->c != NULL) {
+		switch (cond->c->attr) {
+		case FIND_ATTR_NAME:
+			if (cond->c->op != FIND_COMP_EQ) {
+				return (0);
+			}
+			if (fnmatch(cond->c->value, path, 0)) {
+				return (0);
+			}
+			return (1);
+		case FIND_ATTR_INO:
+			switch (cond->c->op) {
+			case FIND_COMP_EQ:
+				if (st->i_ino == *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_NE:
+				if (st->i_ino != *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LT:
+				if (st->i_ino < *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LE:
+				if (st->i_ino <= *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GT:
+				if (st->i_ino > *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GE:
+				if (st->i_ino >= *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			}
+			return (0);
+		case FIND_ATTR_SIZE:
+			switch (cond->c->op) {
+			case FIND_COMP_EQ:
+				if (st->size == *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_NE:
+				if (st->size != *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LT:
+				if (st->size < *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LE:
+				if (st->size <= *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GT:
+				if (st->size > *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GE:
+				if (st->size >= *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			}
+			return (0);
+		case FIND_ATTR_CHUNK_SIZE:
+			switch (cond->c->op) {
+			case FIND_COMP_EQ:
+				if (st->chunk_size ==
+				    *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_NE:
+				if (st->chunk_size !=
+				    *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LT:
+				if (st->chunk_size <
+				    *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LE:
+				if (st->chunk_size <=
+				    *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GT:
+				if (st->chunk_size >
+				    *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GE:
+				if (st->chunk_size >=
+				    *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			}
+			return (0);
+		case FIND_ATTR_MODE:
+			switch (cond->c->op) {
+			case FIND_COMP_EQ:
+				if (st->mode == *(mode_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_NE:
+				if (st->mode != *(mode_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LT:
+				if (st->mode < *(mode_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LE:
+				if (st->mode <= *(mode_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GT:
+				if (st->mode > *(mode_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GE:
+				if (st->mode >= *(mode_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			}
+			return (0);
+		case FIND_ATTR_MTIM_TVSEC:
+			switch (cond->c->op) {
+			case FIND_COMP_EQ:
+				if (st->mtime.tv_sec ==
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_NE:
+				if (st->mtime.tv_sec !=
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LT:
+				if (st->mtime.tv_sec <
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LE:
+				if (st->mtime.tv_sec <=
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GT:
+				if (st->mtime.tv_sec >
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GE:
+				if (st->mtime.tv_sec >=
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			}
+			return (0);
+		case FIND_ATTR_MTIM_TVNSEC:
+			switch (cond->c->op) {
+			case FIND_COMP_EQ:
+				if (st->mtime.tv_nsec ==
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_NE:
+				if (st->mtime.tv_nsec !=
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LT:
+				if (st->mtime.tv_nsec <
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LE:
+				if (st->mtime.tv_nsec <=
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GT:
+				if (st->mtime.tv_nsec >
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GE:
+				if (st->mtime.tv_nsec >=
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			}
+			return (0);
+		case FIND_ATTR_CTIM_TVSEC:
+			switch (cond->c->op) {
+			case FIND_COMP_EQ:
+				if (st->ctime.tv_sec ==
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_NE:
+				if (st->ctime.tv_sec !=
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LT:
+				if (st->ctime.tv_sec <
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LE:
+				if (st->ctime.tv_sec <=
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GT:
+				if (st->ctime.tv_sec >
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GE:
+				if (st->ctime.tv_sec >=
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			}
+			return (0);
+		case FIND_ATTR_CTIM_TVNSEC:
+			switch (cond->c->op) {
+			case FIND_COMP_EQ:
+				if (st->ctime.tv_nsec ==
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_NE:
+				if (st->ctime.tv_nsec !=
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LT:
+				if (st->ctime.tv_nsec <
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_LE:
+				if (st->ctime.tv_nsec <=
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GT:
+				if (st->ctime.tv_nsec >
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_GE:
+				if (st->ctime.tv_nsec >=
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			}
+			return (0);
+		}
+		return (0);
+	}
+	if (cond->l->op == FIND_LOGICAL_AND) {
+		return (eval_condition(cond->l->left, path, st) &&
+			eval_condition(cond->l->right, path, st));
+	} else if (cond->l->op == FIND_LOGICAL_OR) {
+		return (eval_condition(cond->l->left, path, st) ||
+			eval_condition(cond->l->right, path, st));
+	}
+	return (0);
 }

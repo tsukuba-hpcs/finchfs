@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 extern "C" {
+#include "../lib/fs_types.h"
 #include "../finchfsd/find.h"
 #include "../lib/log.h"
 }
@@ -324,6 +325,218 @@ TEST(FIND_TEST, PARENTHESIS_TEST_3)
 	EXPECT_EQ(size->c->attr, FIND_ATTR_SIZE);
 	EXPECT_EQ(*(uint64_t *)size->c->value, 3901);
 	free_condition(n);
+}
+
+TEST(FIND_TEST, EVAL_TEST_1)
+{
+	const char q[] = "name == \"*01*\"";
+	const char name[] = "testFile.0010";
+	find_condition_t *c;
+	char *next;
+	c = build_condition(q, &next, NULL, (find_logical_t)0);
+	ASSERT_TRUE(c != NULL);
+	fs_stat_t st = {
+	    .chunk_size = 1000,
+	    .i_ino = 1000,
+	    .mode = 0,
+	    .mtime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .ctime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .size = 1000,
+	};
+	int ret;
+	ret = eval_condition(c, name, &st);
+	EXPECT_EQ(ret, 1);
+}
+
+TEST(FIND_TEST, EVAL_TEST_2)
+{
+	const char q[] = "name == \"*01*\"";
+	const char name[] = "testFile.0020";
+	find_condition_t *c;
+	char *next;
+	c = build_condition(q, &next, NULL, (find_logical_t)0);
+	ASSERT_TRUE(c != NULL);
+	fs_stat_t st = {
+	    .chunk_size = 1000,
+	    .i_ino = 1000,
+	    .mode = 0,
+	    .mtime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .ctime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .size = 1000,
+	};
+	int ret;
+	ret = eval_condition(c, name, &st);
+	EXPECT_EQ(ret, 0);
+}
+
+TEST(FIND_TEST, EVAL_TEST_3)
+{
+	const char q[] = "name == \"*01*\" && size == 1234";
+	const char name[] = "testFile.0010";
+	find_condition_t *c;
+	char *next;
+	c = build_condition(q, &next, NULL, (find_logical_t)0);
+	ASSERT_TRUE(c != NULL);
+	fs_stat_t st = {
+	    .chunk_size = 1000,
+	    .i_ino = 1000,
+	    .mode = 0,
+	    .mtime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .ctime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .size = 1234,
+	};
+	int ret;
+	ret = eval_condition(c, name, &st);
+	EXPECT_EQ(ret, 1);
+}
+
+TEST(FIND_TEST, EVAL_TEST_4)
+{
+	const char q[] = "name == \"*01*\" || size == 1234";
+	const char name[] = "testFile.0000";
+	find_condition_t *c;
+	char *next;
+	c = build_condition(q, &next, NULL, (find_logical_t)0);
+	ASSERT_TRUE(c != NULL);
+	fs_stat_t st = {
+	    .chunk_size = 1000,
+	    .i_ino = 1000,
+	    .mode = 0,
+	    .mtime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .ctime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .size = 1234,
+	};
+	int ret;
+	ret = eval_condition(c, name, &st);
+	EXPECT_EQ(ret, 1);
+}
+
+TEST(FIND_TEST, EVAL_TEST_5)
+{
+	const char q[] =
+	    "name == \"*01*\" && (mtim.tv_sec < 1558682399 || "
+	    "(mtim.tv_sec == 1558682399 && mtim.tv_nsec < 453303489)) && "
+	    "size == 3901";
+	const char name[] = "testFile.0010";
+	find_condition_t *c;
+	char *next;
+	c = build_condition(q, &next, NULL, (find_logical_t)0);
+	ASSERT_TRUE(c != NULL);
+	fs_stat_t st = {
+	    .chunk_size = 1000,
+	    .i_ino = 1000,
+	    .mode = 0,
+	    .mtime =
+		{
+		    .tv_sec = 1558682398,
+		    .tv_nsec = 453303489,
+		},
+	    .ctime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .size = 3901,
+	};
+	int ret;
+	ret = eval_condition(c, name, &st);
+	EXPECT_EQ(ret, 1);
+}
+
+TEST(FIND_TEST, EVAL_TEST_6)
+{
+	const char q[] =
+	    "name == \"*01*\" && (mtim.tv_sec < 1558682399 || "
+	    "(mtim.tv_sec == 1558682399 && mtim.tv_nsec < 453303489)) && "
+	    "size == 3901";
+	const char name[] = "testFile.0010";
+	find_condition_t *c;
+	char *next;
+	c = build_condition(q, &next, NULL, (find_logical_t)0);
+	ASSERT_TRUE(c != NULL);
+	fs_stat_t st = {
+	    .chunk_size = 1000,
+	    .i_ino = 1000,
+	    .mode = 0,
+	    .mtime =
+		{
+		    .tv_sec = 1558682399,
+		    .tv_nsec = 453303488,
+		},
+	    .ctime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .size = 3901,
+	};
+	int ret;
+	ret = eval_condition(c, name, &st);
+	EXPECT_EQ(ret, 1);
+}
+
+TEST(FIND_TEST, EVAL_TEST_7)
+{
+	const char q[] =
+	    "name == \"*01*\" && (mtim.tv_sec < 1558682399 || "
+	    "(mtim.tv_sec == 1558682399 && mtim.tv_nsec < 453303489)) && "
+	    "size == 3901";
+	const char name[] = "testFile.0010";
+	find_condition_t *c;
+	char *next;
+	c = build_condition(q, &next, NULL, (find_logical_t)0);
+	ASSERT_TRUE(c != NULL);
+	fs_stat_t st = {
+	    .chunk_size = 1000,
+	    .i_ino = 1000,
+	    .mode = 0,
+	    .mtime =
+		{
+		    .tv_sec = 1558682399,
+		    .tv_nsec = 453303489,
+		},
+	    .ctime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .size = 3901,
+	};
+	int ret;
+	ret = eval_condition(c, name, &st);
+	EXPECT_EQ(ret, 0);
 }
 
 int
