@@ -985,19 +985,16 @@ typedef struct {
 } find_param_t;
 
 static void
-fs_rpc_find_internal(iov_req_t **user_data, entry_t *dir, char *path,
-		     find_param_t *param)
+fs_rpc_find_internal(iov_req_t **user_data, entry_t *dir, find_param_t *param)
 {
-	log_debug("fs_rpc_find_internal() called path=%s", path);
+	log_debug("fs_rpc_find_internal() called dir->name=%s", dir->name);
 	entry_t *child;
-	char npath[256];
 	ucs_status_t status;
 
 	RB_FOREACH(child, entrytree, &dir->entries)
 	{
-		snprintf(npath, sizeof(npath), "%s/%s", path, child->name);
 		if (param->recursive && S_ISDIR(child->mode)) {
-			fs_rpc_find_internal(user_data, child, npath, param);
+			fs_rpc_find_internal(user_data, child, param);
 		}
 		fs_stat_t st = {
 		    .chunk_size = child->chunk_size,
@@ -1009,15 +1006,15 @@ fs_rpc_find_internal(iov_req_t **user_data, entry_t *dir, char *path,
 		};
 		find_header_t *rhdr = (find_header_t *)(*user_data)->header;
 		rhdr->total_nentries++;
-		if (!eval_condition(param->cond, npath, &st)) {
+		if (!eval_condition(param->cond, child->name, &st)) {
 			continue;
 		}
 		rhdr->match_nentries++;
 		if (param->return_path) {
-			find_entry_t *ent =
-			    malloc(sizeof(find_entry_t) + strlen(npath) + 1);
-			ent->path_len = strlen(npath) + 1;
-			strcpy(ent->path, npath);
+			find_entry_t *ent = malloc(sizeof(find_entry_t) +
+						   strlen(child->name) + 1);
+			ent->path_len = strlen(child->name) + 1;
+			strcpy(ent->path, child->name);
 			(*user_data)->iov[(*user_data)->n].buffer = ent;
 			(*user_data)->iov[(*user_data)->n].length =
 			    sizeof(find_entry_t) + ent->path_len;
@@ -1133,7 +1130,7 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 	    .header_length = header_length,
 	    .reply_ep = param->reply_ep,
 	};
-	fs_rpc_find_internal(&user_data, dir, path, &fparam);
+	fs_rpc_find_internal(&user_data, dir, &fparam);
 	free_condition(cond);
 	if (user_data->n == 0) {
 		user_data->iov[user_data->n].buffer = malloc(1);

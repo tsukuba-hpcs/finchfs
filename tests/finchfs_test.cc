@@ -567,6 +567,60 @@ TEST(FinchfsTest, FIND4)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, FIND5)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/find5", S_IRWXU), 0);
+	char buf[1024];
+	for (int i = 0; i < 100; i++) {
+		sprintf(buf, "/find5/%d", i);
+		EXPECT_EQ(finchfs_mkdir(buf, S_IRWXU), 0);
+	}
+	for (int i = 0; i < 10000; i++) {
+		sprintf(buf, "/find5/%d/%d", i % 100, i);
+		int fd;
+		fd = finchfs_create(buf, 0, S_IRWXU);
+		EXPECT_EQ(fd, 0);
+		finchfs_close(fd);
+	}
+	finchfs_find_param param = {
+	    .recursive = 1,
+	    .return_path = 0,
+	};
+	EXPECT_EQ(finchfs_find("/find5", "name == \"*\"", &param, NULL, NULL),
+		  0);
+	EXPECT_EQ(param.total_nentries, 10100);
+	EXPECT_EQ(param.match_nentries, 10100);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, FIND6)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/find6", S_IRWXU), 0);
+	char buf[1024];
+	for (int i = 0; i < 100; i++) {
+		sprintf(buf, "/find6/%d", i);
+		EXPECT_EQ(finchfs_mkdir(buf, S_IRWXU), 0);
+	}
+	for (int i = 0; i < 10000; i++) {
+		sprintf(buf, "/find6/%d/%d", i % 100, i);
+		int fd;
+		fd = finchfs_create(buf, 0, S_IRWXU);
+		EXPECT_EQ(fd, 0);
+		finchfs_close(fd);
+	}
+	finchfs_find_param param = {
+	    .recursive = 1,
+	    .return_path = 0,
+	};
+	EXPECT_EQ(finchfs_find("/find6", "name == \"*5*\"", &param, NULL, NULL),
+		  0);
+	EXPECT_EQ(param.total_nentries, 10100);
+	EXPECT_EQ(param.match_nentries, 3458);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {
