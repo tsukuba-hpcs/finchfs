@@ -250,6 +250,9 @@ build_condition(const char *str, char **next, find_condition_t *left,
 	find_comp_node_t *c = build_comp_node(t, &t);
 	if (c == NULL) {
 		*next = NULL;
+		if (left != NULL) {
+			free_condition(left);
+		}
 		return (NULL);
 	}
 	t = next_token(t);
@@ -277,11 +280,21 @@ build_condition(const char *str, char **next, find_condition_t *left,
 	op = get_logical_op(t, &t);
 	if (op < 0) {
 		*next = NULL;
+		free(c->value);
+		free(c);
+		if (left != NULL) {
+			free_condition(left);
+		}
 		return (NULL);
 	}
 	t = next_token(t);
 	if (t == NULL) {
 		*next = NULL;
+		free(c->value);
+		free(c);
+		if (left != NULL) {
+			free_condition(left);
+		}
 		return (NULL);
 	}
 	if (get_left_parenthesis(t, &t)) {
@@ -291,15 +304,32 @@ build_condition(const char *str, char **next, find_condition_t *left,
 		log_debug("ret from build_condition: str=%s, t=%s", str, t);
 		if (right == NULL) {
 			*next = NULL;
+			free(c->value);
+			free(c);
+			if (left != NULL) {
+				free_condition(left);
+			}
 			return (NULL);
 		}
 		t = next_token(t);
 		if (t == NULL) {
 			*next = NULL;
+			free(c->value);
+			free(c);
+			if (left != NULL) {
+				free_condition(left);
+			}
+			free_condition(right);
 			return (NULL);
 		}
 		if (!get_right_parenthesis(t, &t)) {
 			*next = NULL;
+			free(c->value);
+			free(c);
+			if (left != NULL) {
+				free_condition(left);
+			}
+			free_condition(right);
 			return (NULL);
 		}
 		*next = t;
@@ -323,6 +353,7 @@ build_condition(const char *str, char **next, find_condition_t *left,
 			op = get_logical_op(t, &t);
 			if (op < 0) {
 				*next = NULL;
+				free_condition(root);
 				return (NULL);
 			}
 			*next = t;
@@ -350,6 +381,7 @@ build_condition(const char *str, char **next, find_condition_t *left,
 		op = get_logical_op(t, &t);
 		if (op < 0) {
 			*next = NULL;
+			free_condition(root);
 			return (NULL);
 		}
 		*next = t;
