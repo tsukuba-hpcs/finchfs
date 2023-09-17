@@ -20,6 +20,7 @@ typedef enum {
 	FIND_COMP_LE,
 	FIND_COMP_GT,
 	FIND_COMP_GE,
+	FIND_COMP_AND,
 } find_comp_t;
 
 typedef struct find_comp_node {

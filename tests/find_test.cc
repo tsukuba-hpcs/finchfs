@@ -147,6 +147,20 @@ TEST(FIND_TEST, COMP_TEST_10)
 	free(n);
 }
 
+TEST(FIND_TEST, COMP_TEST_11)
+{
+	const char q[] = "mode & 0700";
+	find_comp_node_t *n;
+	char *next;
+	n = build_comp_node(q, &next);
+	ASSERT_TRUE(n != NULL);
+	EXPECT_EQ(n->op, FIND_COMP_AND);
+	EXPECT_EQ(n->attr, FIND_ATTR_MODE);
+	EXPECT_EQ(*(mode_t *)n->value, 0700);
+	free(n->value);
+	free(n);
+}
+
 TEST(FIND_TEST, COND_TEST_1)
 {
 	const char q[] = "name == \"foo\" && size == 3901";
@@ -354,6 +368,7 @@ TEST(FIND_TEST, EVAL_TEST_1)
 	int ret;
 	ret = eval_condition(c, name, &st);
 	EXPECT_EQ(ret, 1);
+	free_condition(c);
 }
 
 TEST(FIND_TEST, EVAL_TEST_2)
@@ -383,6 +398,7 @@ TEST(FIND_TEST, EVAL_TEST_2)
 	int ret;
 	ret = eval_condition(c, name, &st);
 	EXPECT_EQ(ret, 0);
+	free_condition(c);
 }
 
 TEST(FIND_TEST, EVAL_TEST_3)
@@ -412,6 +428,7 @@ TEST(FIND_TEST, EVAL_TEST_3)
 	int ret;
 	ret = eval_condition(c, name, &st);
 	EXPECT_EQ(ret, 1);
+	free_condition(c);
 }
 
 TEST(FIND_TEST, EVAL_TEST_4)
@@ -441,6 +458,7 @@ TEST(FIND_TEST, EVAL_TEST_4)
 	int ret;
 	ret = eval_condition(c, name, &st);
 	EXPECT_EQ(ret, 1);
+	free_condition(c);
 }
 
 TEST(FIND_TEST, EVAL_TEST_5)
@@ -473,6 +491,7 @@ TEST(FIND_TEST, EVAL_TEST_5)
 	int ret;
 	ret = eval_condition(c, name, &st);
 	EXPECT_EQ(ret, 1);
+	free_condition(c);
 }
 
 TEST(FIND_TEST, EVAL_TEST_6)
@@ -505,6 +524,7 @@ TEST(FIND_TEST, EVAL_TEST_6)
 	int ret;
 	ret = eval_condition(c, name, &st);
 	EXPECT_EQ(ret, 1);
+	free_condition(c);
 }
 
 TEST(FIND_TEST, EVAL_TEST_7)
@@ -537,6 +557,37 @@ TEST(FIND_TEST, EVAL_TEST_7)
 	int ret;
 	ret = eval_condition(c, name, &st);
 	EXPECT_EQ(ret, 0);
+	free_condition(c);
+}
+
+TEST(FIND_TEST, EVAL_TEST_8)
+{
+	const char q[] = "mode & 0700";
+	const char name[] = "testFile.0010";
+	find_condition_t *c;
+	char *next;
+	c = build_condition(q, &next, NULL, (find_logical_t)0);
+	ASSERT_TRUE(c != NULL);
+	fs_stat_t st = {
+	    .chunk_size = 1000,
+	    .i_ino = 1000,
+	    .mode = 0700 | S_IFMT,
+	    .mtime =
+		{
+		    .tv_sec = 1558682399,
+		    .tv_nsec = 453303489,
+		},
+	    .ctime =
+		{
+		    .tv_sec = 1000,
+		    .tv_nsec = 1000,
+		},
+	    .size = 3901,
+	};
+	int ret;
+	ret = eval_condition(c, name, &st);
+	EXPECT_EQ(ret, 1);
+	free_condition(c);
 }
 
 int

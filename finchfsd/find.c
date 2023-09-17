@@ -90,6 +90,10 @@ get_comp_op(char *str, char **next)
 		*next = str + 1;
 		return (FIND_COMP_GT);
 	}
+	if (strncmp("&", str, 1) == 0) {
+		*next = str + 1;
+		return (FIND_COMP_AND);
+	}
 	log_error("Invalid comparison operator: %s", str);
 	return (-1);
 }
@@ -167,7 +171,7 @@ build_comp_node(const char *str, char **next)
 	case FIND_ATTR_SIZE:
 	case FIND_ATTR_CHUNK_SIZE:
 		node->value = malloc(sizeof(uint64_t));
-		*(uint64_t *)node->value = strtoull(t, next, 10);
+		*(uint64_t *)node->value = strtoull(t, next, 0);
 		if (t == *next) {
 			free(node->value);
 			free(node);
@@ -176,7 +180,7 @@ build_comp_node(const char *str, char **next)
 		break;
 	case FIND_ATTR_MODE:
 		node->value = malloc(sizeof(mode_t));
-		*(mode_t *)node->value = strtol(t, next, 10);
+		*(mode_t *)node->value = strtol(t, next, 0);
 		if (t == *next) {
 			free(node->value);
 			free(node);
@@ -186,7 +190,7 @@ build_comp_node(const char *str, char **next)
 	case FIND_ATTR_MTIM_TVSEC:
 	case FIND_ATTR_CTIM_TVSEC:
 		node->value = malloc(sizeof(time_t));
-		*(time_t *)node->value = strtol(t, next, 10);
+		*(time_t *)node->value = strtol(t, next, 0);
 		if (t == *next) {
 			free(node->value);
 			free(node);
@@ -196,7 +200,7 @@ build_comp_node(const char *str, char **next)
 	case FIND_ATTR_MTIM_TVNSEC:
 	case FIND_ATTR_CTIM_TVNSEC:
 		node->value = malloc(sizeof(int64_t));
-		*(int64_t *)node->value = strtol(t, next, 10);
+		*(int64_t *)node->value = strtol(t, next, 0);
 		if (t == *next) {
 			free(node->value);
 			free(node);
@@ -466,6 +470,11 @@ eval_condition(find_condition_t *cond, const char *path, fs_stat_t *st)
 					return (1);
 				}
 				break;
+			case FIND_COMP_AND:
+				if (st->i_ino & *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
 			}
 			return (0);
 		case FIND_ATTR_SIZE:
@@ -497,6 +506,11 @@ eval_condition(find_condition_t *cond, const char *path, fs_stat_t *st)
 				break;
 			case FIND_COMP_GE:
 				if (st->size >= *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_AND:
+				if (st->size & *(uint64_t *)cond->c->value) {
 					return (1);
 				}
 				break;
@@ -540,6 +554,12 @@ eval_condition(find_condition_t *cond, const char *path, fs_stat_t *st)
 					return (1);
 				}
 				break;
+			case FIND_COMP_AND:
+				if (st->chunk_size &
+				    *(uint64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
 			}
 			return (0);
 		case FIND_ATTR_MODE:
@@ -571,6 +591,11 @@ eval_condition(find_condition_t *cond, const char *path, fs_stat_t *st)
 				break;
 			case FIND_COMP_GE:
 				if (st->mode >= *(mode_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_AND:
+				if (st->mode & *(mode_t *)cond->c->value) {
 					return (1);
 				}
 				break;
@@ -610,6 +635,12 @@ eval_condition(find_condition_t *cond, const char *path, fs_stat_t *st)
 				break;
 			case FIND_COMP_GE:
 				if (st->mtime.tv_sec >=
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_AND:
+				if (st->mtime.tv_sec &
 				    *(time_t *)cond->c->value) {
 					return (1);
 				}
@@ -654,6 +685,12 @@ eval_condition(find_condition_t *cond, const char *path, fs_stat_t *st)
 					return (1);
 				}
 				break;
+			case FIND_COMP_AND:
+				if (st->mtime.tv_nsec &
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
 			}
 			return (0);
 		case FIND_ATTR_CTIM_TVSEC:
@@ -694,6 +731,12 @@ eval_condition(find_condition_t *cond, const char *path, fs_stat_t *st)
 					return (1);
 				}
 				break;
+			case FIND_COMP_AND:
+				if (st->ctime.tv_sec &
+				    *(time_t *)cond->c->value) {
+					return (1);
+				}
+				break;
 			}
 			return (0);
 		case FIND_ATTR_CTIM_TVNSEC:
@@ -730,6 +773,12 @@ eval_condition(find_condition_t *cond, const char *path, fs_stat_t *st)
 				break;
 			case FIND_COMP_GE:
 				if (st->ctime.tv_nsec >=
+				    *(int64_t *)cond->c->value) {
+					return (1);
+				}
+				break;
+			case FIND_COMP_AND:
+				if (st->ctime.tv_nsec &
 				    *(int64_t *)cond->c->value) {
 					return (1);
 				}
