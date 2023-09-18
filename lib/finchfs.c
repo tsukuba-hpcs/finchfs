@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <errno.h>
+#include "config.h"
 #include "finchfs.h"
 #include "fs_types.h"
 #include "fs_rpc.h"
@@ -58,6 +59,18 @@ finchfs_term()
 	}
 	free(fd_table);
 	return fs_client_term();
+}
+
+const char *
+finchfs_version()
+{
+	return (VERSION);
+}
+
+void
+finchfs_set_chunk_size(size_t chunk_size)
+{
+	finchfs_chunk_size = chunk_size;
 }
 
 int

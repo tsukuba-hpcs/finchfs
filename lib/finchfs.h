@@ -1,5 +1,7 @@
 int finchfs_init(const char *addrfile);
 int finchfs_term();
+const char *finchfs_version();
+void finchfs_set_chunk_size(size_t chunk_size);
 int finchfs_create(const char *path, int32_t flags, mode_t mode);
 int finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 			      size_t chunk_size);
