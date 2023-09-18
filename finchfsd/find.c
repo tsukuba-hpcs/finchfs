@@ -270,6 +270,7 @@ build_condition(const char *str, char **next, find_condition_t *left,
 			find_condition_t *root =
 			    malloc(sizeof(find_condition_t));
 			right->c = c;
+			right->l = NULL;
 			root->c = NULL;
 			root->l = malloc(sizeof(find_logical_node_t));
 			root->l->op = lop;
@@ -401,6 +402,7 @@ build_condition(const char *str, char **next, find_condition_t *left,
 	}
 	find_condition_t *root = malloc(sizeof(find_condition_t));
 	root->c = NULL;
+	root->l = malloc(sizeof(find_logical_node_t));
 	root->l->op = lop;
 	root->l->left = left;
 	root->l->right = malloc(sizeof(find_condition_t));
