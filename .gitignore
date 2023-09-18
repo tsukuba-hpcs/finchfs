@@ -35,3 +35,7 @@ finchfsd/.deps
 finchfsd/.libs
 finchfsd/finchfsd
 finchfsd/*.o
+client/.deps
+client/.libs
+client/finchfind
+client/*.o
