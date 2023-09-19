@@ -72,14 +72,14 @@ main(int argc, char *argv[])
 		name[p - dir] = '\0';
 		++p;
 		ret = finchfs_mkdir(name, mode);
-		if (ret)
+		if (ret && errno != EEXIST)
 			break;
 	}
 
 	if (!ret)
 		ret = finchfs_mkdir(dir, mode);
 
-	if (ret)
+	if (ret && errno != EEXIST)
 		fprintf(stderr, "finchfs_mkdir failed: %s\n", strerror(errno));
 
 	finchfs_term();
