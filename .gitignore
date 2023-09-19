@@ -39,3 +39,4 @@ client/.deps
 client/.libs
 client/finchfind
 client/*.o
+client/finchmkdir
