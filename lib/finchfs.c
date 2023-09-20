@@ -233,6 +233,12 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 	}
 	ret = fs_async_rpc_inode_write_wait(hdles, nchunks);
 	log_debug("fs_async_rpc_inode_write_wait succeeded ret=%d", ret);
+	if (ret < size) {
+		log_warning(
+		    "finchfs_pwrite() wrote less than requested req=%zu "
+		    "ret=%zu",
+		    (size_t)size, ret);
+	}
 	free(hdles);
 	if (ret >= 0 && offset + ret > fd_table[fd].size) {
 		fd_table[fd].size = offset + ret;
@@ -319,6 +325,11 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 	ret = fs_async_rpc_inode_read_wait(hdles, nchunks);
 	log_debug("fs_async_rpc_inode_read_wait succeeded ret=%d", ret);
 	free(hdles);
+	if (ret < size) {
+		log_warning("finchfs_pread() read less than requested req=%zu "
+			    "ret=%zu",
+			    (size_t)size, ret);
+	}
 	return (ret);
 }
 
