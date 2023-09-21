@@ -1054,8 +1054,9 @@ fs_async_rpc_inode_write(uint64_t i_ino, uint64_t index, off_t offset,
 		return (NULL);
 	}
 	int target = (i_ino + index) % env.nvprocs;
-
 	inode_write_handle_t *handle = malloc(sizeof(inode_write_handle_t));
+	log_debug("fs_async_rpc_inode_write: i_ino=%zu index=%zu", i_ino,
+		  index);
 	handle->ret = FINCH_INPROGRESS;
 	handle->ss = -1;
 	handle->header = (inode_write_header_t){
@@ -1169,7 +1170,7 @@ fs_async_rpc_inode_read(uint64_t i_ino, uint64_t index, off_t offset,
 
 	int target = (i_ino + index) % env.nvprocs;
 	inode_read_handle_t *handle = malloc(sizeof(inode_read_handle_t));
-	log_debug("fs_async_rpc_inode_read: handle=%p", handle);
+	log_debug("fs_async_rpc_inode_read: i_ino=%zu index=%zu", i_ino, index);
 	handle->ret = FINCH_INPROGRESS;
 	handle->ss = -1;
 	handle->buf = buf;
