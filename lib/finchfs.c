@@ -174,8 +174,6 @@ finchfs_close(int fd)
 ssize_t
 finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 {
-	log_debug("finchfs_pwrite() called fd=%d size=%zu offset=%ld", fd, size,
-		  offset);
 	ssize_t ret;
 	uint64_t index;
 	off_t local_pos;
@@ -195,6 +193,8 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 	if (size == 0) {
 		return (0);
 	}
+	log_debug("finchfs_pwrite() called ino=%zu size=%zu offset=%ld",
+		  fd_table[fd].i_ino, size, offset);
 	chunk_size = fd_table[fd].chunk_size;
 	index = offset / chunk_size;
 	local_pos = offset % chunk_size;
@@ -265,8 +265,6 @@ finchfs_write(int fd, const void *buf, size_t size)
 ssize_t
 finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 {
-	log_debug("finchfs_pread() called fd=%d size=%zu offset=%ld", fd, size,
-		  offset);
 	ssize_t ret;
 	uint64_t index;
 	off_t local_pos;
@@ -286,6 +284,8 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 	if (size == 0) {
 		return (0);
 	}
+	log_debug("finchfs_pread() called ino=%zu size=%zu offset=%ld",
+		  fd_table[fd].i_ino, size, offset);
 	chunk_size = fd_table[fd].chunk_size;
 	index = offset / chunk_size;
 	local_pos = offset % chunk_size;
