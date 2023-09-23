@@ -1159,7 +1159,7 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 	ctx->nprocs = nprocs;
 	ctx->trank = trank;
 	ctx->nthreads = nthreads;
-	ctx->i_ino = rank * nthreads + trank;
+	ctx->i_ino = rank * nthreads + trank + nprocs * nthreads;
 	ctx->shutdown = shutdown;
 
 	ctx->root.name = "";
