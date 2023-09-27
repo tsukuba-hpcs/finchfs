@@ -76,7 +76,7 @@ main(int argc, char *argv[])
 			break;
 	}
 
-	if (!ret)
+	if (!(ret && errno != EEXIST))
 		ret = finchfs_mkdir(dir, mode);
 
 	if (ret && errno != EEXIST)
