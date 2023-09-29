@@ -485,9 +485,9 @@ TEST(FinchfsTest, FIND)
 	EXPECT_EQ(finchfs_find("/find", "name == \"*\"", &param,
 			       &filler_find_called, filler_find),
 		  0);
-	EXPECT_EQ(filler_find_called, 100);
-	EXPECT_EQ(param.total_nentries, 100);
-	EXPECT_EQ(param.match_nentries, 100);
+	EXPECT_EQ(filler_find_called, 101);
+	EXPECT_EQ(param.total_nentries, 101);
+	EXPECT_EQ(param.match_nentries, 101);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
@@ -511,9 +511,9 @@ TEST(FinchfsTest, FIND2)
 	EXPECT_EQ(finchfs_find("/find2", "name == \"*\"", &param,
 			       &filler_find_called, filler_find),
 		  0);
-	EXPECT_EQ(filler_find_called, 10000);
-	EXPECT_EQ(param.total_nentries, 10000);
-	EXPECT_EQ(param.match_nentries, 10000);
+	EXPECT_EQ(filler_find_called, 10001);
+	EXPECT_EQ(param.total_nentries, 10001);
+	EXPECT_EQ(param.match_nentries, 10001);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
@@ -535,7 +535,7 @@ TEST(FinchfsTest, FIND3)
 	};
 	EXPECT_EQ(finchfs_find("/find3", "name == \"*5*\"", &param, NULL, NULL),
 		  0);
-	EXPECT_EQ(param.total_nentries, 100);
+	EXPECT_EQ(param.total_nentries, 101);
 	EXPECT_EQ(param.match_nentries, 19);
 	EXPECT_EQ(finchfs_term(), 0);
 }
@@ -562,7 +562,7 @@ TEST(FinchfsTest, FIND4)
 	EXPECT_EQ(
 	    finchfs_find("/find4", "size>=10 && size<20", &param, NULL, NULL),
 	    0);
-	EXPECT_EQ(param.total_nentries, 100);
+	EXPECT_EQ(param.total_nentries, 101);
 	EXPECT_EQ(param.match_nentries, 10);
 	EXPECT_EQ(finchfs_term(), 0);
 }
@@ -589,8 +589,8 @@ TEST(FinchfsTest, FIND5)
 	};
 	EXPECT_EQ(finchfs_find("/find5", "name == \"*\"", &param, NULL, NULL),
 		  0);
-	EXPECT_EQ(param.total_nentries, 10100);
-	EXPECT_EQ(param.match_nentries, 10100);
+	EXPECT_EQ(param.total_nentries, 10101);
+	EXPECT_EQ(param.match_nentries, 10101);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
@@ -616,7 +616,7 @@ TEST(FinchfsTest, FIND6)
 	};
 	EXPECT_EQ(finchfs_find("/find6", "name == \"*5*\"", &param, NULL, NULL),
 		  0);
-	EXPECT_EQ(param.total_nentries, 10100);
+	EXPECT_EQ(param.total_nentries, 10101);
 	EXPECT_EQ(param.match_nentries, 3458);
 	EXPECT_EQ(finchfs_term(), 0);
 }

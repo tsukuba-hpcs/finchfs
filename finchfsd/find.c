@@ -225,7 +225,8 @@ get_logical_op(char *str, char **next)
 	return (-1);
 }
 
-static get_left_parenthesis(char *str, char **next)
+static int
+get_left_parenthesis(char *str, char **next)
 {
 	if (strncmp("(", str, 1) == 0) {
 		*next = str + 1;
@@ -234,7 +235,8 @@ static get_left_parenthesis(char *str, char **next)
 	return (0);
 }
 
-static get_right_parenthesis(char *str, char **next)
+static int
+get_right_parenthesis(char *str, char **next)
 {
 	if (strncmp(")", str, 1) == 0) {
 		*next = str + 1;

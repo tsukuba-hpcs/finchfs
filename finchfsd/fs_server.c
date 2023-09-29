@@ -978,6 +978,7 @@ typedef struct {
 	find_condition_t *cond;
 	int recursive;
 	int return_path;
+	int skip_dir;
 	size_t entry_count;
 	find_header_t *header;
 	size_t header_length;
@@ -1005,6 +1006,9 @@ fs_rpc_find_internal(iov_req_t **user_data, entry_t *dir, find_param_t *param)
 		    .size = child->size,
 		};
 		find_header_t *rhdr = (find_header_t *)(*user_data)->header;
+		if (param->skip_dir) {
+			continue;
+		}
 		rhdr->total_nentries++;
 		if (!eval_condition(param->cond, child->name, &st)) {
 			continue;
@@ -1125,12 +1129,40 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 	    .cond = cond,
 	    .recursive = recursive,
 	    .return_path = return_path,
+	    .skip_dir = ctx->rank > 0 || ctx->trank > 0,
 	    .entry_count = hdr->entry_count,
 	    .header = hdr,
 	    .header_length = header_length,
 	    .reply_ep = param->reply_ep,
 	};
 	fs_rpc_find_internal(&user_data, dir, &fparam);
+	if (!fparam.skip_dir) {
+		rhdr->total_nentries++;
+		fs_stat_t st = {
+		    .chunk_size = dir->chunk_size,
+		    .i_ino = dir->i_ino,
+		    .mode = dir->mode,
+		    .mtime = dir->mtime,
+		    .ctime = dir->ctime,
+		    .size = dir->size,
+		};
+		rhdr = (find_header_t *)user_data->header;
+		if (eval_condition(fparam.cond, dir->name, &st)) {
+			rhdr->match_nentries++;
+			if (fparam.return_path) {
+				find_entry_t *ent =
+				    malloc(sizeof(find_entry_t) +
+					   strlen(dir->name) + 1);
+				ent->path_len = strlen(dir->name) + 1;
+				strcpy(ent->path, dir->name);
+				user_data->iov[user_data->n].buffer = ent;
+				user_data->iov[user_data->n].length =
+				    sizeof(find_entry_t) + ent->path_len;
+				user_data->n++;
+				rhdr->entry_count++;
+			}
+		}
+	}
 	free_condition(cond);
 	if (user_data->n == 0) {
 		user_data->iov[user_data->n].buffer = malloc(1);
