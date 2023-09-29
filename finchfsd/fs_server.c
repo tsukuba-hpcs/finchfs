@@ -1006,7 +1006,7 @@ fs_rpc_find_internal(iov_req_t **user_data, entry_t *dir, find_param_t *param)
 		    .size = child->size,
 		};
 		find_header_t *rhdr = (find_header_t *)(*user_data)->header;
-		if (param->skip_dir) {
+		if (param->skip_dir && S_ISDIR(child->mode)) {
 			continue;
 		}
 		rhdr->total_nentries++;
