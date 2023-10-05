@@ -348,27 +348,6 @@ TEST(FinchfsTest, Stat2)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
-TEST(FinchfsTest, Trunc)
-{
-	EXPECT_EQ(finchfs_init(NULL), 0);
-	int fd;
-	char buf[1000];
-	rnd_fill(buf, sizeof(buf));
-	fd = finchfs_create_chunk_size("/trunc1", 0, S_IRWXU, 128);
-	EXPECT_EQ(fd, 0);
-	ssize_t n;
-	n = finchfs_write(fd, buf, sizeof(buf));
-	EXPECT_EQ(n, sizeof(buf));
-	finchfs_close(fd);
-	struct stat st;
-	EXPECT_EQ(finchfs_stat("/trunc1", &st), 0);
-	EXPECT_EQ(st.st_size, sizeof(buf));
-	EXPECT_EQ(finchfs_truncate("/trunc1", 500), 0);
-	EXPECT_EQ(finchfs_stat("/trunc1", &st), 0);
-	EXPECT_EQ(st.st_size, 500);
-	EXPECT_EQ(finchfs_term(), 0);
-}
-
 TEST(FinchfsTest, SingleSharedFile)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
@@ -618,6 +597,122 @@ TEST(FinchfsTest, FIND6)
 		  0);
 	EXPECT_EQ(param.total_nentries, 10101);
 	EXPECT_EQ(param.match_nentries, 3458);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Sparse)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create_chunk_size("/sparse", 0, S_IRWXU, 1);
+	EXPECT_EQ(fd, 0);
+	char a = 'a';
+	char c = 'c';
+	char d = 'd';
+	EXPECT_EQ(finchfs_pwrite(fd, &a, 1, 0), 1);
+	EXPECT_EQ(finchfs_pwrite(fd, &c, 1, 2), 1);
+	EXPECT_EQ(finchfs_pwrite(fd, &d, 1, 3), 1);
+	char buf[4];
+	EXPECT_EQ(finchfs_pread(fd, buf, 4, 0), 4);
+	EXPECT_EQ(buf[0], 'a');
+	EXPECT_EQ(buf[1], '\0');
+	EXPECT_EQ(buf[2], 'c');
+	EXPECT_EQ(buf[3], 'd');
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Sparse2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd1, fd2;
+	fd1 = finchfs_create_chunk_size("/sparse2", 0, S_IRWXU, 1);
+	EXPECT_EQ(fd1, 0);
+	fd2 = finchfs_open("/sparse2", 0);
+	EXPECT_EQ(fd2, 1);
+	char a = 'a';
+	char c = 'c';
+	char d = 'd';
+	EXPECT_EQ(finchfs_pwrite(fd1, &a, 1, 0), 1);
+	EXPECT_EQ(finchfs_pwrite(fd1, &c, 1, 2), 1);
+	EXPECT_EQ(finchfs_pwrite(fd1, &d, 1, 3), 1);
+	char buf[4];
+	EXPECT_EQ(finchfs_pread(fd2, buf, 4, 0), 4);
+	EXPECT_EQ(buf[0], 'a');
+	EXPECT_EQ(buf[1], '\0');
+	EXPECT_EQ(buf[2], 'c');
+	EXPECT_EQ(buf[3], 'd');
+	EXPECT_EQ(finchfs_close(fd1), 0);
+	EXPECT_EQ(finchfs_close(fd2), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Sparse3)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd1, fd2;
+	fd1 = finchfs_create_chunk_size("/sparse3", 0, S_IRWXU, 1);
+	EXPECT_EQ(fd1, 0);
+	fd2 = finchfs_open("/sparse3", 0);
+	EXPECT_EQ(fd2, 1);
+	char a = 'a';
+	char c = 'c';
+	char d = 'd';
+	EXPECT_EQ(finchfs_pwrite(fd1, &a, 1, 0), 1);
+	EXPECT_EQ(finchfs_pwrite(fd1, &c, 1, 2), 1);
+	EXPECT_EQ(finchfs_pwrite(fd1, &d, 1, 3), 1);
+	char buf[4];
+	EXPECT_EQ(finchfs_pread(fd2, buf, 2, 0), 1);
+	EXPECT_EQ(buf[0], 'a');
+	EXPECT_EQ(finchfs_close(fd1), 0);
+	EXPECT_EQ(finchfs_close(fd2), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Sparse4)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create_chunk_size("/sparse4", 0, S_IRWXU, 2);
+	EXPECT_EQ(fd, 0);
+	char a = 'a';
+	char c = 'c';
+	char d = 'd';
+	EXPECT_EQ(finchfs_pwrite(fd, &a, 1, 0), 1);
+	EXPECT_EQ(finchfs_pwrite(fd, &c, 1, 2), 1);
+	EXPECT_EQ(finchfs_pwrite(fd, &d, 1, 3), 1);
+	char buf[4];
+	EXPECT_EQ(finchfs_pread(fd, buf, 4, 0), 4);
+	EXPECT_EQ(buf[0], 'a');
+	EXPECT_EQ(buf[1], '\0');
+	EXPECT_EQ(buf[2], 'c');
+	EXPECT_EQ(buf[3], 'd');
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Sparse5)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd1, fd2;
+	fd1 = finchfs_create_chunk_size("/sparse5", 0, S_IRWXU, 2);
+	EXPECT_EQ(fd1, 0);
+	fd2 = finchfs_open("/sparse5", 0);
+	EXPECT_EQ(fd2, 1);
+	char a = 'a';
+	char c = 'c';
+	char d = 'd';
+	EXPECT_EQ(finchfs_pwrite(fd1, &a, 1, 0), 1);
+	EXPECT_EQ(finchfs_pwrite(fd1, &c, 1, 2), 1);
+	EXPECT_EQ(finchfs_pwrite(fd1, &d, 1, 3), 1);
+	char buf[4];
+	EXPECT_EQ(finchfs_pread(fd2, buf, 4, 0), 4);
+	EXPECT_EQ(buf[0], 'a');
+	EXPECT_EQ(buf[1], '\0');
+	EXPECT_EQ(buf[2], 'c');
+	EXPECT_EQ(buf[3], 'd');
+	EXPECT_EQ(finchfs_close(fd1), 0);
+	EXPECT_EQ(finchfs_close(fd2), 0);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 

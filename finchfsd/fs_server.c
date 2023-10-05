@@ -529,23 +529,26 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	int path_len;
 	char *path;
-	size_t ssize;
+	size_t size;
 	size_t offset = 0;
 	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(path_len);
 	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += path_len;
-	ssize = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
 	log_debug("fs_rpc_inode_stat_update_recv() called path=%s size=%zu",
-		  path, ssize >> 1);
+		  path, size);
 
-	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
 	user_data->header = malloc(header_length);
 	memcpy(user_data->header, header, header_length);
-	user_data->n = 1;
+	user_data->n = 2;
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
+	user_data->iov[1].buffer = malloc(sizeof(size_t));
+	user_data->iov[1].length = sizeof(size_t);
 
 	char name[128];
 	entry_t *parent = get_parent_and_filename(name, path, ctx);
@@ -566,62 +569,18 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 				  path);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 		} else {
-			if (ssize & 1) {
-				ent->size = ssize >> 1;
-			} else if (ent->size < ssize >> 1) {
-				ent->size = ssize >> 1;
+			if (ent->size < size) {
+				ent->size = size;
 			}
 			timespec_get(&ent->mtime, TIME_UTC);
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+			*(size_t *)(user_data->iov[1].buffer) = ent->size;
 		}
 	}
 
 	ucs_status_t status;
-	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
-			      header_length);
-	return (status);
-}
-
-ucs_status_t
-fs_rpc_inode_truncate_recv(void *arg, const void *header, size_t header_length,
-			   void *data, size_t length,
-			   const ucp_am_recv_param_t *param)
-{
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	uint64_t i_ino;
-	uint64_t index;
-	off_t off;
-	size_t offset = 0;
-	i_ino = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(i_ino);
-	index = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(index);
-	off = *(off_t *)UCS_PTR_BYTE_OFFSET(data, offset);
-
-	log_debug(
-	    "fs_rpc_inode_truncate_recv() called i_ino=%lu index=%lu off=%d",
-	    i_ino, index, off);
-
-	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
-	user_data->header = malloc(header_length);
-	memcpy(user_data->header, header, header_length);
-	user_data->n = 1;
-	user_data->iov[0].buffer = malloc(sizeof(int));
-	user_data->iov[0].length = sizeof(int);
-
-	int ret;
-	ret = fs_inode_truncate(ctx->fs, i_ino, index, off);
-	if (ret < 0) {
-		log_debug("fs_rpc_inode_truncate_recv(): i_ino=%ld index=%d %s",
-			  i_ino, index, strerror(errno));
-		*(int *)(user_data->iov[0].buffer) = -errno;
-	} else {
-		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-	}
-
-	ucs_status_t status;
-	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
-			      header_length);
+	status = post_iov_req(param->reply_ep, RPC_INODE_STAT_UPDATE_REP,
+			      user_data, header_length);
 	return (status);
 }
 
@@ -1332,21 +1291,6 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 		 ctx->ucp_worker, &inode_stat_update_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(stat update) failed: %s",
-		    ucs_status_string(status));
-		return (-1);
-	}
-	ucp_am_handler_param_t inode_truncate_param = {
-	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
-			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
-			  UCP_AM_HANDLER_PARAM_FIELD_CB,
-	    .id = RPC_INODE_TRUNCATE_REQ,
-	    .cb = fs_rpc_inode_truncate_recv,
-	    .arg = ctx,
-	};
-	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx->ucp_worker, &inode_truncate_param)) != UCS_OK) {
-		log_error(
-		    "ucp_worker_set_am_recv_handler(chunk stat) failed: %s",
 		    ucs_status_string(status));
 		return (-1);
 	}

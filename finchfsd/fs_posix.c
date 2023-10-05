@@ -105,33 +105,3 @@ fs_inode_read(struct fs_ctx *ctx, uint64_t i_ino, uint64_t index, off_t offset,
 	close(fd);
 	return (ssize_t)(ret);
 }
-
-int
-fs_inode_truncate(struct fs_ctx *ctx, uint64_t i_ino, uint64_t index,
-		  off_t offset)
-{
-	log_debug("fs_inode_truncate() called i_ino=%lu index=%lu", i_ino,
-		  index);
-	char buffer[128];
-	snprintf(buffer, sizeof(buffer), "%lu/%lu.%lu",
-		 i_ino % INODE_SPLIT_SIZE, i_ino, index);
-	int ret;
-	if (offset == 0) {
-		ret = unlink(buffer);
-	} else {
-		int fd;
-		fd = open(buffer, O_WRONLY | O_CREAT, 0644);
-		if (fd < 0) {
-			ret = -1;
-		} else {
-			ret = ftruncate(fd, offset);
-			close(fd);
-		}
-	}
-	if (ret < 0) {
-		log_error("fs_inode_truncate truncate() failed: %s",
-			  strerror(errno));
-		return (-1);
-	}
-	return (0);
-}

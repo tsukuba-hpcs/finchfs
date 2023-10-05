@@ -164,8 +164,8 @@ finchfs_close(int fd)
 		errno = EBADF;
 		return (-1);
 	}
-	int ret = 0;
-	ret = fs_rpc_inode_stat_update(fd_table[fd].path, fd_table[fd].size, 0);
+	int ret;
+	ret = fs_rpc_inode_stat_update(fd_table[fd].path, &fd_table[fd].size);
 	free(fd_table[fd].path);
 	fd_table[fd].path = NULL;
 	return (ret);
@@ -234,10 +234,9 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 	ret = fs_async_rpc_inode_write_wait(hdles, nchunks);
 	log_debug("fs_async_rpc_inode_write_wait succeeded ret=%d", ret);
 	if (ret < size) {
-		log_warning(
-		    "finchfs_pwrite() wrote less than requested req=%zu "
-		    "ret=%zu",
-		    (size_t)size, ret);
+		log_debug("finchfs_pwrite() wrote less than requested req=%zu "
+			  "ret=%zu",
+			  (size_t)size, ret);
 	}
 	free(hdles);
 	if (ret >= 0 && offset + ret > fd_table[fd].size) {
@@ -318,17 +317,20 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 				hdles[nreq++] = hdles[i];
 			}
 		}
-		fs_async_rpc_inode_write_wait(hdles, nreq);
+		fs_async_rpc_inode_read_wait(hdles, nreq, fd_table[fd].size);
 		free(hdles);
 		return (ret);
 	}
-	ret = fs_async_rpc_inode_read_wait(hdles, nchunks);
+	ret = fs_async_rpc_inode_read_wait(hdles, nchunks, fd_table[fd].size);
 	log_debug("fs_async_rpc_inode_read_wait succeeded ret=%d", ret);
 	free(hdles);
 	if (ret < size) {
-		log_warning("finchfs_pread() read less than requested req=%zu "
-			    "ret=%zu",
-			    (size_t)size, ret);
+		log_debug("finchfs_pread() read less than requested req=%zu "
+			  "ret=%zu",
+			  (size_t)size, ret);
+	}
+	if (ret >= 0 && offset + ret > fd_table[fd].size) {
+		fd_table[fd].size = offset + ret;
 	}
 	return (ret);
 }
@@ -358,50 +360,7 @@ finchfs_fsync(int fd)
 		return (-1);
 	}
 	int ret;
-	ret = fs_rpc_inode_stat_update(fd_table[fd].path, fd_table[fd].size, 0);
-	return (ret);
-}
-
-int
-finchfs_truncate(const char *path, off_t len)
-{
-	log_debug("finchfs_truncate() called path=%s len=%d", path, len);
-	int ret;
-	fs_stat_t st;
-	char *p = canonical_path(path);
-	ret = fs_rpc_inode_stat(p, &st);
-	if (ret) {
-		free(p);
-		return (-1);
-	}
-	uint64_t index = 0;
-	while ((index + 1) * st.chunk_size <= len) {
-		ret = fs_rpc_inode_truncate(st.i_ino, index, st.chunk_size);
-		index++;
-		if (ret) {
-			free(p);
-			return (-1);
-		}
-	}
-	ret = fs_rpc_inode_truncate(st.i_ino, index, len % st.chunk_size);
-	if (ret) {
-		free(p);
-		return (-1);
-	}
-	index++;
-	while (1) {
-		ret = fs_rpc_inode_truncate(st.i_ino, index, 0);
-		if (ret && errno == ENOENT) {
-			ret = 0;
-			break;
-		} else if (ret) {
-			free(p);
-			return (-1);
-		}
-		index++;
-	}
-	ret = fs_rpc_inode_stat_update(p, len, 1);
-	free(p);
+	ret = fs_rpc_inode_stat_update(fd_table[fd].path, &fd_table[fd].size);
 	return (ret);
 }
 
