@@ -1,0 +1,112 @@
+<mxfile host="app.diagrams.net" modified="2023-10-07T06:40:00.975Z" agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36" etag="Ip6iF8QDH7-WuO70w1Bj" version="22.0.4" type="device">
+  <diagram name="ページ1" id="zuHZ-hZ87xmVPybcVQ6Z">
+    <mxGraphModel dx="1434" dy="923" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fwTlqsPVC540FUrVCxf3-14" value="" style="group" vertex="1" connectable="0" parent="1">
+          <mxGeometry width="560" height="720" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-13" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;movable=0;resizable=0;rotatable=0;deletable=0;editable=0;locked=1;connectable=0;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-14">
+          <mxGeometry width="560" height="720" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=default;strokeColor=none;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-14">
+          <mxGeometry x="40" y="40" width="480" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-2" value="Application" style="rounded=0;whiteSpace=wrap;html=1;fontSize=24;fillColor=#dae8fc;strokeColor=none;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-14">
+          <mxGeometry x="80" y="80" width="400" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-5" value="FINCHFS library" style="rounded=0;whiteSpace=wrap;html=1;fontSize=24;fillColor=#dae8fc;strokeColor=none;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-14">
+          <mxGeometry x="80" y="200" width="400" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-7" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-14">
+          <mxGeometry x="40" y="320" width="480" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-8" value="finchfsd" style="rounded=0;whiteSpace=wrap;html=1;fontSize=24;fillColor=#dae8fc;strokeColor=none;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-14">
+          <mxGeometry x="80" y="360" width="400" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-9" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=4;" edge="1" parent="fwTlqsPVC540FUrVCxf3-14" target="fwTlqsPVC540FUrVCxf3-5">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="280" y="160" as="sourcePoint" />
+            <mxPoint x="330" y="110" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-10" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;exitX=0.5;exitY=0;exitDx=0;exitDy=0;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=4;" edge="1" parent="fwTlqsPVC540FUrVCxf3-14" source="fwTlqsPVC540FUrVCxf3-8" target="fwTlqsPVC540FUrVCxf3-5">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="240" y="300" as="sourcePoint" />
+            <mxPoint x="290" y="250" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-11" value="Intel Optane Persistent Memory (pmemkv backend) / &lt;br&gt;NVMe SSD (POSIX backend)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fontSize=18;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-14">
+          <mxGeometry x="40" y="520" width="480" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-12" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;exitX=0.5;exitY=0;exitDx=0;exitDy=0;exitPerimeter=0;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=4;" edge="1" parent="fwTlqsPVC540FUrVCxf3-14" source="fwTlqsPVC540FUrVCxf3-11" target="fwTlqsPVC540FUrVCxf3-8">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="230" y="460" as="sourcePoint" />
+            <mxPoint x="280" y="410" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-15" value="" style="group" vertex="1" connectable="0" parent="1">
+          <mxGeometry x="720" width="560" height="720" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-16" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;movable=0;resizable=0;rotatable=0;deletable=0;editable=0;locked=1;connectable=0;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-15">
+          <mxGeometry width="560" height="720" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-17" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=default;strokeColor=none;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-15">
+          <mxGeometry x="40" y="40" width="480" height="240" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-18" value="Application" style="rounded=0;whiteSpace=wrap;html=1;fontSize=24;fillColor=#dae8fc;strokeColor=none;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-15">
+          <mxGeometry x="80" y="80" width="400" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-19" value="FINCHFS library" style="rounded=0;whiteSpace=wrap;html=1;fontSize=24;fillColor=#dae8fc;strokeColor=none;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-15">
+          <mxGeometry x="80" y="200" width="400" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-20" value="" style="rounded=1;whiteSpace=wrap;html=1;strokeColor=none;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-15">
+          <mxGeometry x="40" y="320" width="480" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-21" value="finchfsd" style="rounded=0;whiteSpace=wrap;html=1;fontSize=24;fillColor=#dae8fc;strokeColor=none;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-15">
+          <mxGeometry x="80" y="360" width="400" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-22" value="" style="endArrow=classic;html=1;rounded=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=4;" edge="1" parent="fwTlqsPVC540FUrVCxf3-15" target="fwTlqsPVC540FUrVCxf3-19">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="280" y="160" as="sourcePoint" />
+            <mxPoint x="330" y="110" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-23" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;exitX=0.5;exitY=0;exitDx=0;exitDy=0;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=4;" edge="1" parent="fwTlqsPVC540FUrVCxf3-15" source="fwTlqsPVC540FUrVCxf3-21" target="fwTlqsPVC540FUrVCxf3-19">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="240" y="300" as="sourcePoint" />
+            <mxPoint x="290" y="250" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-24" value="Intel Optane Persistent Memory (pmemkv backend) / &lt;br&gt;NVMe SSD (POSIX backend)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fontSize=18;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="fwTlqsPVC540FUrVCxf3-15">
+          <mxGeometry x="40" y="520" width="480" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-25" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;exitX=0.5;exitY=0;exitDx=0;exitDy=0;exitPerimeter=0;fillColor=#e1d5e7;strokeColor=#9673a6;strokeWidth=4;" edge="1" parent="fwTlqsPVC540FUrVCxf3-15" source="fwTlqsPVC540FUrVCxf3-24" target="fwTlqsPVC540FUrVCxf3-21">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="230" y="460" as="sourcePoint" />
+            <mxPoint x="280" y="410" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-27" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=4;" edge="1" parent="1" source="fwTlqsPVC540FUrVCxf3-2" target="fwTlqsPVC540FUrVCxf3-18">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="590" y="180" as="sourcePoint" />
+            <mxPoint x="640" y="130" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-28" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=4;" edge="1" parent="1" source="fwTlqsPVC540FUrVCxf3-8" target="fwTlqsPVC540FUrVCxf3-19">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="580" y="300" as="sourcePoint" />
+            <mxPoint x="630" y="250" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="fwTlqsPVC540FUrVCxf3-29" value="" style="endArrow=classic;startArrow=classic;html=1;rounded=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=4;" edge="1" parent="1" source="fwTlqsPVC540FUrVCxf3-5" target="fwTlqsPVC540FUrVCxf3-21">
+          <mxGeometry width="50" height="50" relative="1" as="geometry">
+            <mxPoint x="630" y="410" as="sourcePoint" />
+            <mxPoint x="680" y="360" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -40,3 +40,4 @@ client/.libs
 client/finchfind
 client/*.o
 client/finchmkdir
+docs/_build
