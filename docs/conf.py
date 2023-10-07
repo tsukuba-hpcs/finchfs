@@ -7,8 +7,8 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'FINCHFS'
-copyright = '2023, Sohei Koyama, Osamu Tatebe'
-author = 'Sohei Koyama, Osamu Tatebe'
+copyright = '2023, Sohei Koyama and Osamu Tatebe'
+author = 'Sohei Koyama and Osamu Tatebe'
 release = '0.0.4'
 
 # -- General configuration ---------------------------------------------------
