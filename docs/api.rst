@@ -18,7 +18,6 @@ FINCHFS API
     ssize_t finchfs_pread(int fd, void *buf, size_t size, off_t offset);
     ssize_t finchfs_read(int fd, void *buf, size_t size);
     int finchfs_fsync(int fd);
-    int finchfs_truncate(const char *path, off_t len);
     int finchfs_unlink(const char *path);
     int finchfs_mkdir(const char *path, mode_t mode);
     int finchfs_rmdir(const char *path);
