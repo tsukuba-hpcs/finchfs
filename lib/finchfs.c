@@ -351,6 +351,32 @@ finchfs_read(int fd, void *buf, size_t size)
 	return (ret);
 }
 
+off_t
+finchfs_seek(int fd, off_t offset, int whence)
+{
+	log_debug("finchfs_seek() called fd=%d offset=%ld whence=%d", fd,
+		  offset, whence);
+	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	switch (whence) {
+	case SEEK_SET:
+		fd_table[fd].pos = offset;
+		break;
+	case SEEK_CUR:
+		fd_table[fd].pos += offset;
+		break;
+	case SEEK_END:
+		fd_table[fd].pos = fd_table[fd].size + offset;
+		break;
+	default:
+		errno = EINVAL;
+		return (-1);
+	}
+	return (fd_table[fd].pos);
+}
+
 int
 finchfs_fsync(int fd)
 {
