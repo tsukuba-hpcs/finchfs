@@ -716,6 +716,57 @@ TEST(FinchfsTest, Sparse5)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Seek)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/seek", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	char buf[128];
+	rnd_fill(buf, sizeof(buf));
+	EXPECT_EQ(finchfs_write(fd, buf, sizeof(buf)), sizeof(buf));
+	EXPECT_EQ(finchfs_seek(fd, 64, SEEK_SET), 64);
+	char buf2[64];
+	EXPECT_EQ(finchfs_read(fd, buf2, sizeof(buf2)), sizeof(buf2));
+	EXPECT_TRUE(memcmp(buf + 64, buf2, sizeof(buf2)) == 0);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Seek2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/seek2", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	char buf[128];
+	rnd_fill(buf, sizeof(buf));
+	EXPECT_EQ(finchfs_write(fd, buf, sizeof(buf)), sizeof(buf));
+	EXPECT_EQ(finchfs_seek(fd, -64, SEEK_END), 64);
+	char buf2[64];
+	EXPECT_EQ(finchfs_read(fd, buf2, sizeof(buf2)), sizeof(buf2));
+	EXPECT_TRUE(memcmp(buf + 64, buf2, sizeof(buf2)) == 0);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Seek3)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/seek3", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	char buf[128];
+	rnd_fill(buf, sizeof(buf));
+	EXPECT_EQ(finchfs_write(fd, buf, sizeof(buf)), sizeof(buf));
+	EXPECT_EQ(finchfs_seek(fd, -64, SEEK_CUR), 64);
+	char buf2[64];
+	EXPECT_EQ(finchfs_read(fd, buf2, sizeof(buf2)), sizeof(buf2));
+	EXPECT_TRUE(memcmp(buf + 64, buf2, sizeof(buf2)) == 0);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {
