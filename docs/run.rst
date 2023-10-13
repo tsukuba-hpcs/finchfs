@@ -23,7 +23,7 @@ An example of script is below.
     export UCX_IB_MLX5_DEVX=n
     export UCX_IB_REG_METHODS=odp,direct
     export UCX_NUM_EPS=$NUM_CLIENTS
-    mpirun -np $NUM_NODES --map-by ppr:1:node:PE=$NUM_THREADS -x UCX_IB_MLX5_DEVX -x UCX_IB_REG_METHODS -x UCX_NUM_EPS finchfsd -t $NUM_THREADS -c /scr -s $FINCH_DB_SIZE -v debug &
+    mpirun -np $NUM_NODES -hostfile /path/to/hostfile --map-by ppr:1:node:PE=$NUM_THREADS -x UCX_IB_MLX5_DEVX -x UCX_IB_REG_METHODS -x UCX_NUM_EPS finchfsd -t $NUM_THREADS -c /scr -s $FINCH_DB_SIZE -v debug &
     sleep 5 # wait for finchfsd to start
 
 .. warning::
