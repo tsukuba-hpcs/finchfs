@@ -64,14 +64,15 @@ typedef struct {
 	struct fs_ctx *fs;
 } req_rndv_t;
 
-static uint64_t
+static inline uint64_t
 alloc_ino(struct worker_ctx *ctx)
 {
-	return __atomic_fetch_add(&ctx->i_ino, ctx->nprocs * ctx->nthreads,
-				  __ATOMIC_SEQ_CST);
+	uint64_t i_ino = ctx->i_ino;
+	ctx->i_ino += ctx->nprocs * ctx->nthreads;
+	return (i_ino);
 }
 
-int
+static int
 entry_compare(entry_t *a, entry_t *b)
 {
 	return strcmp(a->name, b->name);
@@ -97,7 +98,7 @@ free_meta_tree(entry_t *entry)
 	}
 }
 
-static entry_t *
+static inline entry_t *
 get_parent_and_filename(char *filename, const char *path,
 			struct worker_ctx *ctx)
 {
@@ -129,7 +130,7 @@ get_parent_and_filename(char *filename, const char *path,
 	return (e);
 }
 
-static entry_t *
+static inline entry_t *
 get_dir_entry(const char *path, struct worker_ctx *ctx)
 {
 	entry_t *e = &ctx->root;
