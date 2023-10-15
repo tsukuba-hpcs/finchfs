@@ -914,18 +914,21 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 				  opath);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOTDIR;
 		} else {
-			entry_t *newent = malloc(sizeof(entry_t));
-			newent->name = strdup(ndirname);
-			newent->mode = ent->mode;
-			newent->chunk_size = ent->chunk_size;
-			newent->i_ino = ent->i_ino;
-			newent->mtime = ent->mtime;
-			newent->ctime = ent->ctime;
-			newent->size = ent->size;
-			newent->entries = ent->entries;
+			entry_t *old;
 			RB_REMOVE(entrytree, &oparent->entries, ent);
 			free(ent->name);
-			RB_INSERT(entrytree, &nparent->entries, newent);
+			ent->name = strdup(ndirname);
+			old = RB_INSERT(entrytree, &nparent->entries, ent);
+			if (old != NULL) {
+				RB_REMOVE(entrytree, &nparent->entries, old);
+				free(old->name);
+				old->name = NULL;
+				if (old->ref_count == 0) {
+					free_meta_tree(old);
+					free(old);
+				}
+				RB_INSERT(entrytree, &nparent->entries, ent);
+			}
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		}
 	}
