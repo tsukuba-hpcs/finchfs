@@ -357,19 +357,32 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		ent = RB_INSERT(entrytree, &parent->entries, newent);
 
 		if (ent != NULL) {
-			free(newent->name);
-			free(newent);
 			if (i_ino > 0) {
-				ent->i_ino = i_ino;
-				ent->mode = mode;
-				ent->chunk_size = chunk_size;
-				ent->size = size;
-				timespec_get(&ent->mtime, TIME_UTC);
-				timespec_get(&ent->ctime, TIME_UTC);
+				RB_REMOVE(entrytree, &parent->entries, ent);
+				free(ent->name);
+				if (ent->ref_count == 0) {
+					free(ent);
+				} else {
+					ent->name = NULL;
+				}
+				newent->i_ino = i_ino;
+				newent->mode = mode;
+				newent->chunk_size = chunk_size;
+				newent->size = size;
+				timespec_get(&newent->mtime, TIME_UTC);
+				timespec_get(&newent->ctime, TIME_UTC);
+				RB_INSERT(entrytree, &parent->entries, newent);
+				*(uint64_t *)(user_data->iov[1].buffer) =
+				    newent->i_ino;
+				*(void **)user_data->iov[2].buffer = newent;
+			} else {
+				free(newent->name);
+				free(newent);
+				ent->ref_count++;
+				*(uint64_t *)(user_data->iov[1].buffer) =
+				    ent->i_ino;
+				*(void **)(user_data->iov[2].buffer) = ent;
 			}
-			ent->ref_count++;
-			*(uint64_t *)(user_data->iov[1].buffer) = ent->i_ino;
-			*(void **)(user_data->iov[2].buffer) = ent;
 		} else {
 			if (i_ino > 0) {
 				newent->i_ino = i_ino;
