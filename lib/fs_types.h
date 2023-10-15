@@ -1,6 +1,7 @@
 typedef struct {
 	size_t chunk_size;
 	uint64_t i_ino;
+	uint64_t eid;
 	mode_t mode;
 	struct timespec mtime, ctime;
 	size_t size;

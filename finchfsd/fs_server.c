@@ -26,6 +26,7 @@ struct entry {
 	struct timespec mtime;
 	struct timespec ctime;
 	size_t size;
+	uint32_t ref_count;
 	RB_ENTRY(entry) link;
 	struct entrytree entries;
 };
@@ -92,8 +93,13 @@ free_meta_tree(entry_t *entry)
 			}
 			free_meta_tree(n);
 			RB_REMOVE(entrytree, &entry->entries, n);
-			free(n->name);
-			free(n);
+			if (n->ref_count == 0) {
+				free(n->name);
+				free(n);
+			} else {
+				free(n->name);
+				n->name = NULL;
+			}
 		}
 	}
 }
@@ -285,6 +291,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 			newent->mode = mode;
 			newent->chunk_size = 0;
 			newent->i_ino = alloc_ino(ctx);
+			newent->ref_count = 0;
 			timespec_get(&newent->mtime, TIME_UTC);
 			timespec_get(&newent->ctime, TIME_UTC);
 			newent->entries.rbh_root = NULL;
@@ -326,14 +333,16 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	log_debug("fs_rpc_inode_create_recv() called path=%s", path);
 
 	iov_req_t *user_data =
-	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 3);
 	user_data->header = malloc(header_length);
 	memcpy(user_data->header, header, header_length);
-	user_data->n = 2;
+	user_data->n = 3;
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
 	user_data->iov[1].buffer = malloc(sizeof(uint64_t));
 	user_data->iov[1].length = sizeof(uint64_t);
+	user_data->iov[2].buffer = malloc(sizeof(void *));
+	user_data->iov[2].length = sizeof(void *);
 
 	char filename[128];
 	entry_t *parent = get_parent_and_filename(filename, path, ctx);
@@ -358,7 +367,9 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 				timespec_get(&ent->mtime, TIME_UTC);
 				timespec_get(&ent->ctime, TIME_UTC);
 			}
+			ent->ref_count++;
 			*(uint64_t *)(user_data->iov[1].buffer) = ent->i_ino;
+			*(void **)(user_data->iov[2].buffer) = ent;
 		} else {
 			if (i_ino > 0) {
 				newent->i_ino = i_ino;
@@ -374,7 +385,9 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			newent->chunk_size = chunk_size;
 			timespec_get(&newent->mtime, TIME_UTC);
 			timespec_get(&newent->ctime, TIME_UTC);
+			newent->ref_count = 1;
 			*(uint64_t *)(user_data->iov[1].buffer) = newent->i_ino;
+			*(void **)(user_data->iov[2].buffer) = newent;
 		}
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 	}
@@ -431,6 +444,13 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 			free_meta_tree(ent);
 			RB_REMOVE(entrytree, &parent->entries, ent);
+			if (ent->ref_count == 0) {
+				free(ent->name);
+				free(ent);
+			} else {
+				free(ent->name);
+				ent->name = NULL;
+			}
 		}
 	}
 
@@ -489,6 +509,7 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 			st->mtime = ent->mtime;
 			st->ctime = ent->ctime;
 			st->size = ent->size;
+			memcpy(&st->eid, &ent, sizeof(ent));
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		}
 	}
@@ -505,61 +526,52 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 			      const ucp_am_recv_param_t *param)
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	int path_len;
-	char *path;
-	size_t size;
+	entry_t *eid;
+	size_t ssize;
 	size_t offset = 0;
-	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(path_len);
-	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += path_len;
-	size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	eid = *(entry_t **)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(eid);
+	ssize = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 
-	log_debug("fs_rpc_inode_stat_update_recv() called path=%s size=%zu",
-		  path, size);
+	log_debug("fs_rpc_inode_stat_update_recv() called eid=%p size=%zu", eid,
+		  ssize >> 1);
 
-	iov_req_t *user_data =
-	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
-	user_data->header = malloc(header_length);
-	memcpy(user_data->header, header, header_length);
-	user_data->n = 2;
-	user_data->iov[0].buffer = malloc(sizeof(int));
-	user_data->iov[0].length = sizeof(int);
-	user_data->iov[1].buffer = malloc(sizeof(size_t));
-	user_data->iov[1].length = sizeof(size_t);
-
-	char name[128];
-	entry_t *parent = get_parent_and_filename(name, path, ctx);
-
-	if (parent == NULL) {
-		log_debug(
-		    "fs_rpc_inode_stat_update_recv() path=%s does not exist",
-		    path);
-		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
-	} else {
-		entry_t key = {
-		    .name = name,
-		};
-		entry_t *ent = RB_FIND(entrytree, &parent->entries, &key);
-		if (ent == NULL) {
-			log_debug("fs_rpc_inode_stat_update_recv() path=%s "
-				  "does not exist",
-				  path);
-			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	if (ssize & 1) {
+		eid->ref_count--;
+		if (eid->ref_count == 0 && eid->name == NULL) {
+			free(eid);
 		} else {
-			if (ent->size < size) {
-				ent->size = size;
+			if (eid->size < (ssize >> 1)) {
+				eid->size = ssize >> 1;
 			}
-			timespec_get(&ent->mtime, TIME_UTC);
-			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-			*(size_t *)(user_data->iov[1].buffer) = ent->size;
+			timespec_get(&eid->mtime, TIME_UTC);
 		}
+	} else {
+		if (eid->size < (ssize >> 1)) {
+			eid->size = ssize >> 1;
+		}
+		timespec_get(&eid->mtime, TIME_UTC);
+
+		iov_req_t *user_data =
+		    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
+		user_data->header = malloc(header_length);
+		memcpy(user_data->header, header, header_length);
+		user_data->n = 2;
+		user_data->iov[0].buffer = malloc(sizeof(int));
+		user_data->iov[0].length = sizeof(int);
+		user_data->iov[1].buffer = malloc(sizeof(size_t));
+		user_data->iov[1].length = sizeof(size_t);
+
+		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+		*(size_t *)(user_data->iov[1].buffer) = eid->size;
+
+		ucs_status_t status;
+		status = post_iov_req(param->reply_ep, RPC_INODE_FSYNC_REP,
+				      user_data, header_length);
+		return (status);
 	}
 
-	ucs_status_t status;
-	status = post_iov_req(param->reply_ep, RPC_INODE_STAT_UPDATE_REP,
-			      user_data, header_length);
-	return (status);
+	return (UCS_OK);
 }
 
 static int

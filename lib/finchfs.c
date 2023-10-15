@@ -22,6 +22,7 @@ static struct fd_table {
 	off_t pos;
 	size_t size;
 	uint64_t i_ino;
+	uint64_t eid;
 } *fd_table;
 
 #define IS_NULL_STRING(str) (str == NULL || str[0] == '\0')
@@ -104,10 +105,11 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 	fd_table[fd].pos = 0;
 	fd_table[fd].i_ino = 0;
 	fd_table[fd].size = 0;
+	fd_table[fd].eid = 0;
 
 	mode |= S_IFREG;
 	ret = fs_rpc_inode_create(p, mode, chunk_size, &fd_table[fd].i_ino,
-				  &fd_table[fd].size);
+				  &fd_table[fd].size, &fd_table[fd].eid);
 	if (ret) {
 		free(fd_table[fd].path);
 		fd_table[fd].path = NULL;
@@ -151,6 +153,7 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].mode = st.mode;
 	fd_table[fd].chunk_size = st.chunk_size;
 	fd_table[fd].size = st.size;
+	fd_table[fd].eid = st.eid;
 	log_debug("finchfs_open() called path=%s inode=%d chunk_size=%zu", path,
 		  st.i_ino, st.chunk_size);
 	return (fd);
@@ -165,7 +168,8 @@ finchfs_close(int fd)
 		return (-1);
 	}
 	int ret;
-	ret = fs_rpc_inode_stat_update(fd_table[fd].path, &fd_table[fd].size);
+	ret = fs_rpc_inode_close(fd_table[fd].path, fd_table[fd].eid,
+				 fd_table[fd].size);
 	free(fd_table[fd].path);
 	fd_table[fd].path = NULL;
 	return (ret);
@@ -386,7 +390,8 @@ finchfs_fsync(int fd)
 		return (-1);
 	}
 	int ret;
-	ret = fs_rpc_inode_stat_update(fd_table[fd].path, &fd_table[fd].size);
+	ret = fs_rpc_inode_fsync(fd_table[fd].path, fd_table[fd].eid,
+				 &fd_table[fd].size);
 	return (ret);
 }
 
@@ -472,6 +477,7 @@ finchfs_rename(const char *oldpath, const char *newpath)
 	char *oldp = canonical_path(oldpath);
 	char *newp = canonical_path(newpath);
 	fs_stat_t st;
+	uint64_t eid;
 	ret = fs_rpc_inode_stat(oldp, &st);
 	if (ret) {
 		free(oldp);
@@ -494,7 +500,7 @@ finchfs_rename(const char *oldpath, const char *newpath)
 	}
 	log_debug("finchfs_rename(): unlink inode=%d", st.i_ino);
 	ret = fs_rpc_inode_create(newp, st.mode, st.chunk_size, &st.i_ino,
-				  &st.size);
+				  &st.size, &eid);
 	free(oldp);
 	free(newp);
 	return (ret);

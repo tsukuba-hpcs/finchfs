@@ -767,6 +767,17 @@ TEST(FinchfsTest, Seek3)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, CloseAfterUnlink)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/close_after_unlink", 0, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	EXPECT_EQ(finchfs_unlink("/close_after_unlink"), 0);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {

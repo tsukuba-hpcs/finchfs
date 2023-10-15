@@ -33,15 +33,13 @@ fs_rpc_ret_reply(void *arg, const void *header, size_t header_length,
 typedef struct {
 	int ret;
 	size_t size;
-} inode_stat_update_handle_t;
+} inode_fsync_handle_t;
 
 ucs_status_t
-fs_rpc_stat_update_reply(void *arg, const void *header, size_t header_length,
-			 void *data, size_t length,
-			 const ucp_am_recv_param_t *param)
+fs_rpc_fsync_reply(void *arg, const void *header, size_t header_length,
+		   void *data, size_t length, const ucp_am_recv_param_t *param)
 {
-	inode_stat_update_handle_t *handle =
-	    *(inode_stat_update_handle_t **)header;
+	inode_fsync_handle_t *handle = *(inode_fsync_handle_t **)header;
 	size_t offset = 0;
 	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(int);
@@ -52,6 +50,7 @@ fs_rpc_stat_update_reply(void *arg, const void *header, size_t header_length,
 typedef struct {
 	int ret;
 	uint64_t i_ino;
+	uint64_t eid;
 } inode_create_handle_t;
 
 ucs_status_t
@@ -63,6 +62,8 @@ fs_rpc_inode_reply(void *arg, const void *header, size_t header_length,
 	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
 	offset += sizeof(int);
 	handle->i_ino = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(uint64_t);
+	handle->eid = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
 	return (UCS_OK);
 }
 
@@ -480,20 +481,19 @@ fs_client_init(char *addrfile)
 			  ucs_status_string(status));
 		return (-1);
 	}
-	ucp_am_handler_param_t stat_update_reply_param = {
+	ucp_am_handler_param_t fsync_reply_param = {
 	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
 			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
-	    .id = RPC_INODE_STAT_UPDATE_REP,
-	    .cb = fs_rpc_stat_update_reply,
+	    .id = RPC_INODE_FSYNC_REP,
+	    .cb = fs_rpc_fsync_reply,
 	    .arg = NULL,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &stat_update_reply_param)) != UCS_OK) {
-		log_error(
-		    "ucp_worker_set_am_recv_handler(inode stat update) failed: "
-		    "%s",
-		    ucs_status_string(status));
+		 env.ucp_worker, &fsync_reply_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(inode fsync) failed: "
+			  "%s",
+			  ucs_status_string(status));
 		return (-1);
 	}
 	return (0);
@@ -683,7 +683,7 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 
 int
 fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
-		    uint64_t *i_ino, size_t *size)
+		    uint64_t *i_ino, size_t *size, uint64_t *eid)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
 	int path_len = strlen(path) + 1;
@@ -704,6 +704,7 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 	inode_create_handle_t handle;
 	handle.ret = FINCH_INPROGRESS;
 	handle.i_ino = 0;
+	handle.eid = 0;
 	void *handle_addr = &handle;
 	int *ret_addr = &handle.ret;
 
@@ -746,6 +747,7 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 	}
 	log_debug("fs_rpc_inode_create: succeeded ino=%d", handle.i_ino);
 	*i_ino = handle.i_ino;
+	*eid = handle.eid;
 	return (0);
 }
 
@@ -960,19 +962,17 @@ fs_rpc_inode_stat(const char *path, fs_stat_t *st)
 }
 
 int
-fs_rpc_inode_stat_update(const char *path, size_t *size)
+fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size)
 {
-	int path_len = strlen(path) + 1;
 	int target = path_to_target_hash(path, env.nvprocs);
-	ucp_dt_iov_t iov[3];
-	iov[0].buffer = &path_len;
-	iov[0].length = sizeof(path_len);
-	iov[1].buffer = (void *)path;
-	iov[1].length = path_len;
-	iov[2].buffer = size;
-	iov[2].length = sizeof(*size);
+	size_t ssize = (*size) << 1;
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = &eid;
+	iov[0].length = sizeof(eid);
+	iov[1].buffer = &ssize;
+	iov[1].length = sizeof(ssize);
 
-	inode_stat_update_handle_t handle = {
+	inode_fsync_handle_t handle = {
 	    .ret = FINCH_INPROGRESS,
 	    .size = 0,
 	};
@@ -988,7 +988,7 @@ fs_rpc_inode_stat_update(const char *path, size_t *size)
 
 	ucs_status_ptr_t req;
 	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_STAT_UPDATE_REQ,
-			      &handle_addr, sizeof(void *), iov, 3, &rparam);
+			      &handle_addr, sizeof(void *), iov, 2, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
@@ -997,7 +997,7 @@ fs_rpc_inode_stat_update(const char *path, size_t *size)
 	if (req != NULL) {
 		status = ucp_request_check_status(req);
 		if (status != UCS_OK) {
-			log_error("fs_rpc_inode_stat_update: ucp_am_send_nbx() "
+			log_error("fs_rpc_inode_fsync: ucp_am_send_nbx() "
 				  "failed: %s",
 				  ucs_status_string(status));
 			errno = EIO;
@@ -1006,18 +1006,59 @@ fs_rpc_inode_stat_update(const char *path, size_t *size)
 		ucp_request_free(req);
 	}
 
-	log_debug("fs_rpc_inode_stat_update: ucp_am_send_nbx() succeeded");
+	log_debug("fs_rpc_inode_fsync: ucp_am_send_nbx() succeeded");
 	while (!all_ret_finish(&ret_addr, 1)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
 	if (handle.ret != FINCH_OK) {
-		log_error("fs_rpc_inode_stat_update: stat() failed: %s",
+		log_error("fs_rpc_inode_fsync: stat() failed: %s",
 			  strerror(-handle.ret));
 		errno = -handle.ret;
 		return (-1);
 	}
-	log_debug("fs_rpc_inode_stat_update: succeeded");
+	log_debug("fs_rpc_inode_fsync: succeeded");
 	*size = handle.size;
+	return (0);
+}
+
+int
+fs_rpc_inode_close(const char *path, uint64_t eid, size_t size)
+{
+	int target = path_to_target_hash(path, env.nvprocs);
+	size_t ssize = (size << 1) + 1;
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = &eid;
+	iov[0].length = sizeof(eid);
+	iov[1].buffer = &ssize;
+	iov[1].length = sizeof(ssize);
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t req;
+	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_STAT_UPDATE_REQ,
+			      NULL, 0, iov, 2, &rparam);
+
+	ucs_status_t status;
+	while (!all_req_finish(&req, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (req != NULL) {
+		status = ucp_request_check_status(req);
+		if (status != UCS_OK) {
+			log_error("fs_rpc_inode_close: ucp_am_send_nbx() "
+				  "failed: %s",
+				  ucs_status_string(status));
+			errno = EIO;
+			return (-1);
+		}
+		ucp_request_free(req);
+	}
+	log_debug("fs_rpc_inode_close: ucp_am_send_nbx() succeeded");
 	return (0);
 }
 
