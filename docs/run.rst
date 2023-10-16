@@ -5,14 +5,14 @@ Run FINCHFS
 Run finchfsd
 ============
 
-``finchfsd`` starts with MPI. The finchfsd options are below.
+``finchfsd`` starts with MPI. The finchfsd options are the following.
 
 * ``-c db_dir`` : specifies a database directory or a DAX device. If the directory does not exist, it will be created.
 * ``-s db_size`` : specifies a database size. This option is only effective when using the pmemkv and fsdax. Default is 1 GiB.
 * ``-t num_threads`` : specifies the number of threads of the finchfsd. Default is 1.
 * ``-v log_level`` : specifies the log level (e.g. debug). Default is info.
 
-An example of script is below.
+An example of a script is the following.
 
 .. code-block:: bash
 
