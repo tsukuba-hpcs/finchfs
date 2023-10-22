@@ -20,7 +20,7 @@
 int fs_rpc_mkdir(const char *path, mode_t mode);
 int fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 			uint64_t *i_ino, size_t *size, uint64_t *eid);
-int fs_rpc_inode_stat(const char *path, fs_stat_t *st);
+int fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open);
 int fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size);
 int fs_rpc_inode_close(const char *path, uint64_t eid, size_t size);
 void *fs_async_rpc_inode_write(uint64_t i_ino, uint64_t index, off_t offset,

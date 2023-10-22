@@ -137,7 +137,7 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].path = p;
 	fd_table[fd].pos = 0;
 	fs_stat_t st;
-	ret = fs_rpc_inode_stat(p, &st);
+	ret = fs_rpc_inode_stat(p, &st, 1);
 	if (ret) {
 		free(fd_table[fd].path);
 		fd_table[fd].path = NULL;
@@ -437,7 +437,7 @@ finchfs_stat(const char *path, struct stat *st)
 	char *p = canonical_path(path);
 	fs_stat_t fst;
 	int ret;
-	ret = fs_rpc_inode_stat(p, &fst);
+	ret = fs_rpc_inode_stat(p, &fst, 0);
 	if (ret) {
 		free(p);
 		return (-1);
@@ -478,7 +478,7 @@ finchfs_rename(const char *oldpath, const char *newpath)
 	char *newp = canonical_path(newpath);
 	fs_stat_t st;
 	uint64_t eid;
-	ret = fs_rpc_inode_stat(oldp, &st);
+	ret = fs_rpc_inode_stat(oldp, &st, 0);
 	if (ret) {
 		free(oldp);
 		free(newp);

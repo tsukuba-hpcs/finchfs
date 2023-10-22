@@ -479,11 +479,11 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 		       const ucp_am_recv_param_t *param)
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	int path_len;
+	uint8_t open;
 	char *path;
 	size_t offset = 0;
-	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(path_len);
+	open = *(uint8_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	offset += sizeof(open);
 	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
 
 	log_debug("fs_rpc_inode_stat_recv() called path=%s", path);
@@ -509,7 +509,7 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 		entry_t key = {
 		    .name = name,
 		};
-		const entry_t *ent = RB_FIND(entrytree, &parent->entries, &key);
+		entry_t *ent = RB_FIND(entrytree, &parent->entries, &key);
 		if (ent == NULL) {
 			log_debug(
 			    "fs_rpc_inode_stat_recv() path=%s does not exist",
@@ -524,6 +524,9 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 			st->size = ent->size;
 			memcpy(&st->eid, &ent, sizeof(ent));
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+			if (open) {
+				ent->ref_count++;
+			}
 		}
 	}
 

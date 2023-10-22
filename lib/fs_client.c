@@ -898,15 +898,14 @@ fs_rpc_inode_unlink_all(const char *path)
 }
 
 int
-fs_rpc_inode_stat(const char *path, fs_stat_t *st)
+fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
-	int path_len = strlen(path) + 1;
 	ucp_dt_iov_t iov[2];
-	iov[0].buffer = &path_len;
-	iov[0].length = sizeof(path_len);
+	iov[0].buffer = &open;
+	iov[0].length = sizeof(open);
 	iov[1].buffer = (void *)path;
-	iov[1].length = path_len;
+	iov[1].length = strlen(path) + 1;
 
 	inode_stat_handle_t handle;
 	handle.ret = FINCH_INPROGRESS;
