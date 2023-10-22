@@ -20,9 +20,12 @@ int finchfs_stat(const char *path, struct stat *st);
 int finchfs_readdir(const char *path, void *buf,
 		    void (*filler)(void *, const char *, const struct stat *));
 int finchfs_rename(const char *oldpath, const char *newpath);
+typedef enum {
+	FINCHFS_FIND_FLAG_RECURSIVE = (1 << 0),
+	FINCHFS_FIND_FLAG_RETURN_PATH = (1 << 1),
+} finchfs_find_flag_t;
 struct finchfs_find_param {
-	int recursive;
-	int return_path;
+	uint8_t flag;
 	size_t total_nentries;
 	size_t match_nentries;
 };

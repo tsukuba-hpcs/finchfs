@@ -40,10 +40,10 @@ fs_rpc_fsync_reply(void *arg, const void *header, size_t header_length,
 		   void *data, size_t length, const ucp_am_recv_param_t *param)
 {
 	inode_fsync_handle_t *handle = *(inode_fsync_handle_t **)header;
-	size_t offset = 0;
-	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(int);
-	handle->size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *p = (char *)data;
+	handle->ret = *(int *)p;
+	p += sizeof(int);
+	handle->size = *(size_t *)p;
 	return (UCS_OK);
 }
 
@@ -58,12 +58,12 @@ fs_rpc_inode_reply(void *arg, const void *header, size_t header_length,
 		   void *data, size_t length, const ucp_am_recv_param_t *param)
 {
 	inode_create_handle_t *handle = *(inode_create_handle_t **)header;
-	size_t offset = 0;
-	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(int);
-	handle->i_ino = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(uint64_t);
-	handle->eid = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *p = (char *)data;
+	handle->ret = *(int *)p;
+	p += sizeof(int);
+	handle->i_ino = *(uint64_t *)p;
+	p += sizeof(uint64_t);
+	handle->eid = *(uint64_t *)p;
 	return (UCS_OK);
 }
 
@@ -78,10 +78,10 @@ fs_rpc_inode_stat_reply(void *arg, const void *header, size_t header_length,
 			const ucp_am_recv_param_t *param)
 {
 	inode_stat_handle_t *handle = *(inode_stat_handle_t **)header;
-	size_t offset = 0;
-	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(int);
-	handle->st = *(fs_stat_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *p = (char *)data;
+	handle->ret = *(int *)p;
+	p += sizeof(int);
+	handle->st = *(fs_stat_t *)p;
 	return (UCS_OK);
 }
 
@@ -97,10 +97,10 @@ fs_rpc_inode_chunk_stat_reply(void *arg, const void *header,
 {
 	inode_chunk_stat_handle_t *handle =
 	    *(inode_chunk_stat_handle_t **)header;
-	size_t offset = 0;
-	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(int);
-	handle->size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *p = (char *)data;
+	handle->ret = *(int *)p;
+	p += sizeof(int);
+	handle->size = *(size_t *)p;
 	return (UCS_OK);
 }
 
@@ -117,10 +117,10 @@ fs_rpc_inode_write_reply(void *arg, const void *header, size_t header_length,
 			 const ucp_am_recv_param_t *param)
 {
 	inode_write_handle_t *handle = *(inode_write_handle_t **)header;
-	size_t offset = 0;
-	handle->ret = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(int);
-	handle->ss = *(ssize_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *p = (char *)data;
+	handle->ret = *(int *)p;
+	p += sizeof(int);
+	handle->ss = *(ssize_t *)p;
 	return (UCS_OK);
 }
 
@@ -223,13 +223,11 @@ fs_rpc_readdir_reply(void *arg, const void *header, size_t header_length,
 	readdir_header_t *hdr = (readdir_header_t *)header;
 	readdir_handle_t *handle = hdr->handle;
 	log_debug("fs_rpc_readdir_reply: entry_count=%d", hdr->entry_count);
-	size_t offset = 0;
+	char *p = (char *)data;
 	if (hdr->ret == FINCH_OK || hdr->ret == FINCH_INPROGRESS) {
 		for (int i = 0; i < hdr->entry_count; i++) {
-			readdir_entry_t *ent =
-			    (readdir_entry_t *)UCS_PTR_BYTE_OFFSET(data,
-								   offset);
-			offset += sizeof(readdir_entry_t) + ent->path_len;
+			readdir_entry_t *ent = (readdir_entry_t *)p;
+			p += sizeof(readdir_entry_t) + ent->path_len;
 			struct stat st;
 			st.st_mode = ent->mode;
 			st.st_uid = getuid();
@@ -274,12 +272,11 @@ fs_rpc_find_reply(void *arg, const void *header, size_t header_length,
 	log_debug(
 	    "fs_rpc_find_reply: total_nentries=%zu match_nentries=%zu ret=%d",
 	    hdr->total_nentries, hdr->match_nentries, hdr->ret);
-	size_t offset = 0;
+	char *p = (char *)data;
 	if (hdr->ret == FINCH_OK || hdr->ret == FINCH_INPROGRESS) {
 		for (int i = 0; i < hdr->entry_count; i++) {
-			find_entry_t *ent =
-			    (find_entry_t *)UCS_PTR_BYTE_OFFSET(data, offset);
-			offset += sizeof(find_entry_t) + ent->path_len;
+			find_entry_t *ent = (find_entry_t *)p;
+			p += sizeof(find_entry_t) + ent->path_len;
 			handle->filler(handle->arg, ent->path);
 		}
 		handle->total_nentries += hdr->total_nentries;
@@ -592,14 +589,11 @@ path_to_target_hash(const char *path, int div)
 int
 fs_rpc_mkdir(const char *path, mode_t mode)
 {
-	int path_len = strlen(path) + 1;
-	ucp_dt_iov_t iov[3];
-	iov[0].buffer = &path_len;
-	iov[0].length = sizeof(path_len);
-	iov[1].buffer = (void *)path;
-	iov[1].length = path_len;
-	iov[2].buffer = &mode;
-	iov[2].length = sizeof(mode);
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = (void *)path;
+	iov[0].length = strlen(path) + 1;
+	iov[1].buffer = &mode;
+	iov[1].length = sizeof(mode);
 
 	int *ret = malloc(sizeof(int) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
@@ -620,7 +614,7 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_MKDIR_REQ,
-					  &rets_addr[i], sizeof(void *), iov, 3,
+					  &rets_addr[i], sizeof(void *), iov, 2,
 					  &rparam);
 	}
 
@@ -686,20 +680,17 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 		    uint64_t *i_ino, size_t *size, uint64_t *eid)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
-	int path_len = strlen(path) + 1;
-	ucp_dt_iov_t iov[6];
-	iov[0].buffer = &path_len;
-	iov[0].length = sizeof(path_len);
-	iov[1].buffer = (void *)path;
-	iov[1].length = path_len;
-	iov[2].buffer = &mode;
-	iov[2].length = sizeof(mode);
-	iov[3].buffer = &chunk_size;
-	iov[3].length = sizeof(chunk_size);
-	iov[4].buffer = i_ino;
-	iov[4].length = sizeof(*i_ino);
-	iov[5].buffer = size;
-	iov[5].length = sizeof(*size);
+	ucp_dt_iov_t iov[5];
+	iov[0].buffer = (void *)path;
+	iov[0].length = strlen(path) + 1;
+	iov[1].buffer = &mode;
+	iov[1].length = sizeof(mode);
+	iov[2].buffer = &chunk_size;
+	iov[2].length = sizeof(chunk_size);
+	iov[3].buffer = i_ino;
+	iov[3].length = sizeof(*i_ino);
+	iov[4].buffer = size;
+	iov[4].length = sizeof(*size);
 
 	inode_create_handle_t handle;
 	handle.ret = FINCH_INPROGRESS;
@@ -718,7 +709,7 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 	ucs_status_ptr_t req;
 	req =
 	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_CREATE_REQ,
-			    &handle_addr, sizeof(handle_addr), iov, 6, &rparam);
+			    &handle_addr, sizeof(handle_addr), iov, 5, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
@@ -755,12 +746,9 @@ int
 fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
-	int path_len = strlen(path) + 1;
-	ucp_dt_iov_t iov[2];
-	iov[0].buffer = &path_len;
-	iov[0].length = sizeof(path_len);
-	iov[1].buffer = (void *)path;
-	iov[1].length = path_len;
+	ucp_dt_iov_t iov[1];
+	iov[0].buffer = (void *)path;
+	iov[0].length = strlen(path) + 1;
 
 	inode_create_handle_t handle;
 	handle.ret = FINCH_INPROGRESS;
@@ -778,7 +766,7 @@ fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
 	ucs_status_ptr_t req;
 	req =
 	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_UNLINK_REQ,
-			    &handle_addr, sizeof(handle_addr), iov, 2, &rparam);
+			    &handle_addr, sizeof(handle_addr), iov, 1, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
@@ -813,12 +801,9 @@ fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
 int
 fs_rpc_inode_unlink_all(const char *path)
 {
-	int path_len = strlen(path) + 1;
-	ucp_dt_iov_t iov[2];
-	iov[0].buffer = &path_len;
-	iov[0].length = sizeof(path_len);
-	iov[1].buffer = (void *)path;
-	iov[1].length = path_len;
+	ucp_dt_iov_t iov[1];
+	iov[0].buffer = (void *)path;
+	iov[0].length = strlen(path) + 1;
 
 	inode_create_handle_t **handles =
 	    malloc(sizeof(inode_create_handle_t *) * env.nvprocs);
@@ -839,7 +824,7 @@ fs_rpc_inode_unlink_all(const char *path)
 	for (int i = 0; i < env.nvprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_INODE_UNLINK_REQ,
 					  &handles[i], sizeof(handles[i]), iov,
-					  2, &rparam);
+					  1, &rparam);
 	}
 	while (!all_req_finish(reqs, env.nvprocs)) {
 		ucp_worker_progress(env.ucp_worker);
@@ -1341,12 +1326,9 @@ int
 fs_rpc_readdir(const char *path, void *arg,
 	       void (*filler)(void *, const char *, const struct stat *))
 {
-	int path_len = strlen(path) + 1;
-	ucp_dt_iov_t iov[2];
-	iov[0].buffer = &path_len;
-	iov[0].length = sizeof(path_len);
-	iov[1].buffer = (void *)path;
-	iov[1].length = path_len;
+	ucp_dt_iov_t iov[1];
+	iov[0].buffer = (void *)path;
+	iov[0].length = strlen(path) + 1;
 
 	readdir_handle_t *handles =
 	    malloc(sizeof(readdir_handle_t) * env.nvprocs);
@@ -1371,7 +1353,7 @@ fs_rpc_readdir(const char *path, void *arg,
 	for (int i = 0; i < env.nvprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(
 		    env.ucp_eps[i], RPC_READDIR_REQ, &handles[i].header,
-		    sizeof(handles[i].header), iov, 2, &rparam);
+		    sizeof(handles[i].header), iov, 1, &rparam);
 	}
 	while (!all_req_finish(reqs, env.nvprocs)) {
 		ucp_worker_progress(env.ucp_worker);
@@ -1430,17 +1412,11 @@ fs_rpc_readdir(const char *path, void *arg,
 int
 fs_rpc_dir_move(const char *oldpath, const char *newpath)
 {
-	int opath_len = strlen(oldpath) + 1;
-	int npath_len = strlen(newpath) + 1;
-	ucp_dt_iov_t iov[4];
-	iov[0].buffer = &opath_len;
-	iov[0].length = sizeof(opath_len);
-	iov[1].buffer = (void *)oldpath;
-	iov[1].length = opath_len;
-	iov[2].buffer = &npath_len;
-	iov[2].length = sizeof(npath_len);
-	iov[3].buffer = (void *)newpath;
-	iov[3].length = npath_len;
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = (void *)oldpath;
+	iov[0].length = strlen(oldpath) + 1;
+	iov[1].buffer = (void *)newpath;
+	iov[1].length = strlen(newpath) + 1;
 
 	int *ret = malloc(sizeof(int) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
@@ -1461,7 +1437,7 @@ fs_rpc_dir_move(const char *oldpath, const char *newpath)
 	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_DIR_MOVE_REQ,
-					  &rets_addr[i], sizeof(void *), iov, 4,
+					  &rets_addr[i], sizeof(void *), iov, 2,
 					  &rparam);
 	}
 
@@ -1526,21 +1502,13 @@ fs_rpc_find(const char *path, const char *query,
 	    struct finchfs_find_param *param, void *arg,
 	    void (*filler)(void *, const char *))
 {
-	int path_len = strlen(path) + 1;
-	int query_len = strlen(query) + 1;
-	ucp_dt_iov_t iov[6];
-	iov[0].buffer = &path_len;
-	iov[0].length = sizeof(path_len);
-	iov[1].buffer = (void *)path;
-	iov[1].length = path_len;
-	iov[2].buffer = &query_len;
-	iov[2].length = sizeof(query_len);
-	iov[3].buffer = (void *)query;
-	iov[3].length = query_len;
-	iov[4].buffer = &param->recursive;
-	iov[4].length = sizeof(param->recursive);
-	iov[5].buffer = &param->return_path;
-	iov[5].length = sizeof(param->recursive);
+	ucp_dt_iov_t iov[3];
+	iov[0].buffer = (void *)path;
+	iov[0].length = strlen(path) + 1;
+	iov[1].buffer = (void *)query;
+	iov[1].length = strlen(query) + 1;
+	iov[2].buffer = &param->flag;
+	iov[2].length = sizeof(param->flag);
 
 	find_handle_t *handles = malloc(sizeof(find_handle_t) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
@@ -1548,7 +1516,8 @@ fs_rpc_find(const char *path, const char *query,
 		handles[i].arg = arg;
 		handles[i].filler = filler;
 		handles[i].header.handle = &handles[i];
-		handles[i].header.entry_count = param->recursive ? 1024 : 1;
+		handles[i].header.entry_count =
+		    (param->flag & FINCHFS_FIND_FLAG_RETURN_PATH) ? 1024 : 1;
 		handles[i].total_nentries = 0;
 		handles[i].match_nentries = 0;
 	}
@@ -1565,7 +1534,7 @@ fs_rpc_find(const char *path, const char *query,
 	for (int i = 0; i < env.nvprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(
 		    env.ucp_eps[i], RPC_FIND_REQ, &handles[i].header,
-		    sizeof(handles[i].header), iov, 6, &rparam);
+		    sizeof(handles[i].header), iov, 3, &rparam);
 	}
 	while (!all_req_finish(reqs, env.nvprocs)) {
 		ucp_worker_progress(env.ucp_worker);

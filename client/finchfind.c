@@ -197,8 +197,7 @@ main(int argc, char *argv[])
 	}
 
 	struct finchfs_find_param param = {
-	    .recursive = 1,
-	    .return_path = 0,
+	    .flag = FINCHFS_FIND_FLAG_RECURSIVE,
 	    .total_nentries = 0,
 	    .match_nentries = 0,
 	};

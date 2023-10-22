@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
+#include "finchfs.h"
 #include "fs_types.h"
 #include "fs_rpc.h"
 #include "tree.h"
@@ -250,15 +251,8 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 		  void *data, size_t length, const ucp_am_recv_param_t *param)
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	int path_len;
-	char *path;
-	mode_t mode;
-	size_t offset = 0;
-	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(path_len);
-	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += path_len;
-	mode = *(mode_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *path = (char *)data;
+	mode_t mode = *(mode_t *)UCS_PTR_BYTE_OFFSET(data, strlen(path) + 1);
 
 	log_debug("fs_rpc_mkdir_recv() called path=%s", path);
 
@@ -311,24 +305,21 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			 const ucp_am_recv_param_t *param)
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	int path_len;
 	char *path;
 	mode_t mode;
 	size_t chunk_size;
 	uint64_t i_ino;
 	size_t size;
-	size_t offset = 0;
-	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(path_len);
-	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += path_len;
-	mode = *(mode_t *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(mode);
-	chunk_size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(chunk_size);
-	i_ino = *(uint64_t *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(i_ino);
-	size = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *p = (char *)data;
+	path = (char *)p;
+	p += strlen(path) + 1;
+	mode = *(mode_t *)p;
+	p += sizeof(mode);
+	chunk_size = *(size_t *)p;
+	p += sizeof(chunk_size);
+	i_ino = *(uint64_t *)p;
+	p += sizeof(i_ino);
+	size = *(size_t *)p;
 
 	log_debug("fs_rpc_inode_create_recv() called path=%s", path);
 
@@ -417,12 +408,7 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 			 const ucp_am_recv_param_t *param)
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	int path_len;
-	char *path;
-	size_t offset = 0;
-	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(path_len);
-	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *path = (char *)data;
 
 	log_debug("fs_rpc_inode_unlink_recv() called path=%s", path);
 
@@ -481,10 +467,10 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	uint8_t open;
 	char *path;
-	size_t offset = 0;
-	open = *(uint8_t *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(open);
-	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *p = (char *)data;
+	open = *(uint8_t *)p;
+	p += sizeof(open);
+	path = (char *)p;
 
 	log_debug("fs_rpc_inode_stat_recv() called path=%s", path);
 
@@ -541,13 +527,12 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 			      size_t header_length, void *data, size_t length,
 			      const ucp_am_recv_param_t *param)
 {
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	entry_t *eid;
 	size_t ssize;
-	size_t offset = 0;
-	eid = *(entry_t **)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(eid);
-	ssize = *(size_t *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *p = (char *)data;
+	eid = *(entry_t **)p;
+	p += sizeof(eid);
+	ssize = *(size_t *)p;
 
 	log_debug("fs_rpc_inode_stat_update_recv() called eid=%p size=%zu", eid,
 		  ssize >> 1);
@@ -766,12 +751,7 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 		    void *data, size_t length, const ucp_am_recv_param_t *param)
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	int path_len;
-	char *path;
-	size_t offset = 0;
-	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(path_len);
-	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *path = (char *)data;
 	readdir_header_t *hdr = (readdir_header_t *)header;
 
 	log_debug("fs_rpc_readdir_recv() called path=%s count=%d", path,
@@ -865,18 +845,8 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 		     const ucp_am_recv_param_t *param)
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	int opath_len;
-	int npath_len;
-	char *opath;
-	char *npath;
-	size_t offset = 0;
-	opath_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(opath_len);
-	opath = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += opath_len;
-	npath_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(npath_len);
-	npath = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
+	char *opath = (char *)data;
+	char *npath = (char *)UCS_PTR_BYTE_OFFSET(data, strlen(opath) + 1);
 
 	log_debug("fs_rpc_dir_move_recv() called opath=%s npath=%s", opath,
 		  npath);
@@ -1026,29 +996,21 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 		 void *data, size_t length, const ucp_am_recv_param_t *param)
 {
 	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-	int path_len;
 	char *path;
-	int query_len;
 	char *query;
-	int recursive;
-	int return_path;
-	size_t offset = 0;
-	path_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(path_len);
-	path = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += path_len;
-	query_len = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(query_len);
-	query = (char *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += query_len;
-	recursive = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
-	offset += sizeof(recursive);
-	return_path = *(int *)UCS_PTR_BYTE_OFFSET(data, offset);
+	uint8_t flag;
+	char *p = (char *)data;
+	path = (char *)p;
+	p += strlen(path) + 1;
+	query = (char *)p;
+	p += strlen(query) + 1;
+	flag = *(uint8_t *)p;
 	find_header_t *hdr = (find_header_t *)header;
 
 	log_debug("fs_rpc_find_recv() called path=%s query=%s recursive=%d "
 		  "return_path=%d",
-		  path, query, recursive, return_path);
+		  path, query, flag & FINCHFS_FIND_FLAG_RECURSIVE,
+		  flag & FINCHFS_FIND_FLAG_RETURN_PATH);
 
 	iov_req_t *user_data =
 	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * hdr->entry_count);
@@ -1095,8 +1057,8 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 	}
 	find_param_t fparam = {
 	    .cond = cond,
-	    .recursive = recursive,
-	    .return_path = return_path,
+	    .recursive = flag & FINCHFS_FIND_FLAG_RECURSIVE,
+	    .return_path = flag & FINCHFS_FIND_FLAG_RETURN_PATH,
 	    .skip_dir = ctx->rank > 0 || ctx->trank > 0,
 	    .entry_count = hdr->entry_count,
 	    .header = hdr,

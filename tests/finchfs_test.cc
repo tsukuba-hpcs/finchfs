@@ -458,8 +458,7 @@ TEST(FinchfsTest, FIND)
 	}
 	int filler_find_called = 0;
 	finchfs_find_param param = {
-	    .recursive = 1,
-	    .return_path = 1,
+	    .flag = FINCHFS_FIND_FLAG_RECURSIVE | FINCHFS_FIND_FLAG_RETURN_PATH,
 	};
 	EXPECT_EQ(finchfs_find("/find", "name == \"*\"", &param,
 			       &filler_find_called, filler_find),
@@ -484,8 +483,7 @@ TEST(FinchfsTest, FIND2)
 	}
 	int filler_find_called = 0;
 	finchfs_find_param param = {
-	    .recursive = 1,
-	    .return_path = 1,
+	    .flag = FINCHFS_FIND_FLAG_RECURSIVE | FINCHFS_FIND_FLAG_RETURN_PATH,
 	};
 	EXPECT_EQ(finchfs_find("/find2", "name == \"*\"", &param,
 			       &filler_find_called, filler_find),
@@ -509,8 +507,7 @@ TEST(FinchfsTest, FIND3)
 		finchfs_close(fd);
 	}
 	finchfs_find_param param = {
-	    .recursive = 1,
-	    .return_path = 0,
+	    .flag = FINCHFS_FIND_FLAG_RECURSIVE,
 	};
 	EXPECT_EQ(finchfs_find("/find3", "name == \"*5*\"", &param, NULL, NULL),
 		  0);
@@ -535,8 +532,7 @@ TEST(FinchfsTest, FIND4)
 		finchfs_close(fd);
 	}
 	finchfs_find_param param = {
-	    .recursive = 1,
-	    .return_path = 0,
+	    .flag = FINCHFS_FIND_FLAG_RECURSIVE,
 	};
 	EXPECT_EQ(
 	    finchfs_find("/find4", "size>=10 && size<20", &param, NULL, NULL),
@@ -563,8 +559,7 @@ TEST(FinchfsTest, FIND5)
 		finchfs_close(fd);
 	}
 	finchfs_find_param param = {
-	    .recursive = 1,
-	    .return_path = 0,
+	    .flag = FINCHFS_FIND_FLAG_RECURSIVE,
 	};
 	EXPECT_EQ(finchfs_find("/find5", "name == \"*\"", &param, NULL, NULL),
 		  0);
@@ -590,8 +585,7 @@ TEST(FinchfsTest, FIND6)
 		finchfs_close(fd);
 	}
 	finchfs_find_param param = {
-	    .recursive = 1,
-	    .return_path = 0,
+	    .flag = FINCHFS_FIND_FLAG_RECURSIVE,
 	};
 	EXPECT_EQ(finchfs_find("/find6", "name == \"*5*\"", &param, NULL, NULL),
 		  0);
