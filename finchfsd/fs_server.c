@@ -661,6 +661,7 @@ fs_rpc_inode_write_recv(void *arg, const void *header, size_t header_length,
 		ucs_status_ptr_t req = ucp_am_recv_data_nbx(
 		    ctx->ucp_worker, data, user_data->buf, length, &rparam);
 		if (req == NULL) {
+			log_debug("ucp_am_recv_data_nbx completed immediately");
 			free(user_data->header);
 			free(user_data->buf);
 			free(user_data);

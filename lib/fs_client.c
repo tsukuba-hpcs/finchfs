@@ -178,6 +178,7 @@ fs_rpc_inode_read_reply(void *arg, const void *header, size_t header_length,
 		    ucp_am_recv_data_nbx(env.ucp_worker, data, handle->buf,
 					 user_data->size, &rparam);
 		if (req == NULL) {
+			log_debug("ucp_am_recv_data_nbx completed immediately");
 			handle->ret = hdr->ret;
 			if (hdr->ret == FINCH_OK) {
 				handle->ss = hdr->size;
