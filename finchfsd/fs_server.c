@@ -13,8 +13,6 @@
 #include "log.h"
 #include "find.h"
 
-#define MAX_NTHREADS 128
-
 struct entry;
 struct entrytree {
 	struct entry *rbh_root;
@@ -37,15 +35,15 @@ typedef struct entry entry_t;
 struct worker_ctx {
 	int rank;
 	int nprocs;
-	int trank;
-	int nthreads;
+	int lrank;
+	int lnprocs;
 	uint64_t i_ino;
 	ucp_context_h ucp_context;
 	ucp_worker_h ucp_worker;
 	int *shutdown;
 	entry_t root;
 	struct fs_ctx *fs;
-} all_ctx[MAX_NTHREADS];
+} ctx;
 
 typedef struct {
 	void *header;
@@ -70,7 +68,7 @@ static inline uint64_t
 alloc_ino(struct worker_ctx *ctx)
 {
 	uint64_t i_ino = ctx->i_ino;
-	ctx->i_ino += ctx->nprocs * ctx->nthreads;
+	ctx->i_ino += ctx->nprocs;
 	return (i_ino);
 }
 
@@ -250,7 +248,6 @@ ucs_status_t
 fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 		  void *data, size_t length, const ucp_am_recv_param_t *param)
 {
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	char *path = (char *)data;
 	mode_t mode = *(mode_t *)UCS_PTR_BYTE_OFFSET(data, strlen(path) + 1);
 
@@ -264,7 +261,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[0].length = sizeof(int);
 
 	char dirname[128];
-	entry_t *parent = get_parent_and_filename(dirname, path, ctx);
+	entry_t *parent = get_parent_and_filename(dirname, path, &ctx);
 
 	if (parent == NULL) {
 		log_debug("fs_rpc_mkdir_recv() parent path=%s does not exist",
@@ -284,7 +281,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 			log_debug("fs_rpc_mkdir_recv() create path=%s", path);
 			newent->mode = mode;
 			newent->chunk_size = 0;
-			newent->i_ino = alloc_ino(ctx);
+			newent->i_ino = alloc_ino(&ctx);
 			newent->ref_count = 0;
 			timespec_get(&newent->mtime, TIME_UTC);
 			timespec_get(&newent->ctime, TIME_UTC);
@@ -304,7 +301,6 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			 void *data, size_t length,
 			 const ucp_am_recv_param_t *param)
 {
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	char *path;
 	mode_t mode;
 	size_t chunk_size;
@@ -336,7 +332,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[2].length = sizeof(void *);
 
 	char filename[128];
-	entry_t *parent = get_parent_and_filename(filename, path, ctx);
+	entry_t *parent = get_parent_and_filename(filename, path, &ctx);
 	if (parent == NULL) {
 		log_debug("fs_rpc_inode_create_recv() path=%s does not exist",
 			  path);
@@ -379,7 +375,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 				newent->i_ino = i_ino;
 				newent->size = size;
 			} else {
-				newent->i_ino = alloc_ino(ctx);
+				newent->i_ino = alloc_ino(&ctx);
 				newent->size = 0;
 			}
 			log_debug("fs_rpc_inode_create_recv() create path=%s "
@@ -407,7 +403,6 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 			 void *data, size_t length,
 			 const ucp_am_recv_param_t *param)
 {
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	char *path = (char *)data;
 
 	log_debug("fs_rpc_inode_unlink_recv() called path=%s", path);
@@ -423,7 +418,7 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[1].length = sizeof(uint64_t);
 
 	char name[128];
-	entry_t *parent = get_parent_and_filename(name, path, ctx);
+	entry_t *parent = get_parent_and_filename(name, path, &ctx);
 	if (parent == NULL) {
 		log_debug("fs_rpc_inode_unlink_recv() path=%s does not exist",
 			  path);
@@ -464,7 +459,6 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 		       void *data, size_t length,
 		       const ucp_am_recv_param_t *param)
 {
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	uint8_t open;
 	char *path;
 	char *p = (char *)data;
@@ -486,7 +480,7 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 
 	fs_stat_t *st = (fs_stat_t *)user_data->iov[1].buffer;
 	char name[128];
-	entry_t *parent = get_parent_and_filename(name, path, ctx);
+	entry_t *parent = get_parent_and_filename(name, path, &ctx);
 	if (parent == NULL) {
 		log_debug("fs_rpc_inode_stat_recv() path=%s does not exist",
 			  path);
@@ -632,7 +626,6 @@ fs_rpc_inode_write_recv(void *arg, const void *header, size_t header_length,
 			void *data, size_t length,
 			const ucp_am_recv_param_t *param)
 {
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	inode_write_header_t *hdr = (inode_write_header_t *)header;
 	log_debug("fs_rpc_inode_write_recv() called i_ino=%lu index=%lu "
 		  "offset=%ld length=%zu",
@@ -646,7 +639,7 @@ fs_rpc_inode_write_recv(void *arg, const void *header, size_t header_length,
 		user_data->size = length;
 		user_data->buf = malloc(length);
 		user_data->reply_ep = param->reply_ep;
-		user_data->fs = ctx->fs;
+		user_data->fs = ctx.fs;
 		ucp_request_param_t rparam = {
 		    .op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE |
 				    UCP_OP_ATTR_FIELD_CALLBACK |
@@ -659,7 +652,7 @@ fs_rpc_inode_write_recv(void *arg, const void *header, size_t header_length,
 		    .user_data = user_data,
 		};
 		ucs_status_ptr_t req = ucp_am_recv_data_nbx(
-		    ctx->ucp_worker, data, user_data->buf, length, &rparam);
+		    ctx.ucp_worker, data, user_data->buf, length, &rparam);
 		if (req == NULL) {
 			log_debug("ucp_am_recv_data_nbx completed immediately");
 			free(user_data->header);
@@ -680,7 +673,7 @@ fs_rpc_inode_write_recv(void *arg, const void *header, size_t header_length,
 		int ret;
 		ret = fs_rpc_inode_write_internal(
 		    hdr->i_ino, hdr->index, hdr->offset, length, data,
-		    param->reply_ep, hdr->handle, ctx->fs);
+		    param->reply_ep, hdr->handle, ctx.fs);
 		if (ret) {
 			log_error("fs_rpc_inode_write_internal() failed");
 		}
@@ -693,8 +686,6 @@ fs_rpc_inode_read_recv(void *arg, const void *header, size_t header_length,
 		       void *data, size_t length,
 		       const ucp_am_recv_param_t *param)
 {
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
-
 	contig_req_t *user_data = malloc(sizeof(contig_req_t));
 	user_data->header = malloc(header_length);
 	memcpy(user_data->header, header, header_length);
@@ -716,7 +707,7 @@ fs_rpc_inode_read_recv(void *arg, const void *header, size_t header_length,
 	    .user_data = user_data,
 	};
 
-	rhdr->size = fs_inode_read(ctx->fs, rhdr->i_ino, rhdr->index,
+	rhdr->size = fs_inode_read(ctx.fs, rhdr->i_ino, rhdr->index,
 				   rhdr->offset, rhdr->size, user_data->buf);
 	if (rhdr->size < 0) {
 		log_error("fs_inode_read() failed: %s", strerror(errno));
@@ -751,7 +742,6 @@ ucs_status_t
 fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 		    void *data, size_t length, const ucp_am_recv_param_t *param)
 {
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	char *path = (char *)data;
 	readdir_header_t *hdr = (readdir_header_t *)header;
 
@@ -767,7 +757,7 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 	rhdr->entry_count = 0;
 	user_data->n = 0;
 
-	entry_t *dir = get_dir_entry(path, ctx);
+	entry_t *dir = get_dir_entry(path, &ctx);
 	ucs_status_t status;
 	if (dir == NULL) {
 		if (errno == ENOENT) {
@@ -845,7 +835,6 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 		     void *data, size_t length,
 		     const ucp_am_recv_param_t *param)
 {
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	char *opath = (char *)data;
 	char *npath = (char *)UCS_PTR_BYTE_OFFSET(data, strlen(opath) + 1);
 
@@ -861,8 +850,8 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 
 	char odirname[128];
 	char ndirname[128];
-	entry_t *oparent = get_parent_and_filename(odirname, opath, ctx);
-	entry_t *nparent = get_parent_and_filename(ndirname, npath, ctx);
+	entry_t *oparent = get_parent_and_filename(odirname, opath, &ctx);
+	entry_t *nparent = get_parent_and_filename(ndirname, npath, &ctx);
 
 	if (oparent == NULL) {
 		log_debug("fs_rpc_dir_move_recv() opath=%s does not exist",
@@ -996,7 +985,6 @@ ucs_status_t
 fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 		 void *data, size_t length, const ucp_am_recv_param_t *param)
 {
-	struct worker_ctx *ctx = (struct worker_ctx *)arg;
 	char *path;
 	char *query;
 	uint8_t flag;
@@ -1024,7 +1012,7 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 	rhdr->match_nentries = 0;
 	user_data->n = 0;
 
-	entry_t *dir = get_dir_entry(path, ctx);
+	entry_t *dir = get_dir_entry(path, &ctx);
 	ucs_status_t status;
 	if (dir == NULL) {
 		if (errno == ENOENT) {
@@ -1060,7 +1048,7 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 	    .cond = cond,
 	    .recursive = flag & FINCHFS_FIND_FLAG_RECURSIVE,
 	    .return_path = flag & FINCHFS_FIND_FLAG_RETURN_PATH,
-	    .skip_dir = ctx->rank > 0 || ctx->trank > 0,
+	    .skip_dir = ctx.rank > 0,
 	    .entry_count = hdr->entry_count,
 	    .header = hdr,
 	    .header_length = header_length,
@@ -1108,37 +1096,30 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 }
 
 int
-fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
-	       int nthreads, int *shutdown)
+fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int lrank,
+	       int lnprocs, int *shutdown)
 {
-	if (trank >= MAX_NTHREADS) {
-		log_error("fs_server_init() trank=%d >= MAX_NTHREADS=%d", trank,
-			  MAX_NTHREADS);
-		return (-1);
-	}
-	struct worker_ctx *ctx = &all_ctx[trank];
+	ctx.rank = rank;
+	ctx.nprocs = nprocs;
+	ctx.lrank = lrank;
+	ctx.lnprocs = lnprocs;
+	ctx.i_ino = rank + nprocs;
+	ctx.shutdown = shutdown;
 
-	ctx->rank = rank;
-	ctx->nprocs = nprocs;
-	ctx->trank = trank;
-	ctx->nthreads = nthreads;
-	ctx->i_ino = rank * nthreads + trank + nprocs * nthreads;
-	ctx->shutdown = shutdown;
-
-	ctx->root.name = "";
-	ctx->root.mode = S_IFDIR | S_IRWXU;
-	ctx->root.chunk_size = 0;
-	ctx->root.i_ino = 0;
-	timespec_get(&ctx->root.mtime, TIME_UTC);
-	timespec_get(&ctx->root.ctime, TIME_UTC);
-	ctx->root.entries.rbh_root = NULL;
+	ctx.root.name = "";
+	ctx.root.mode = S_IFDIR | S_IRWXU;
+	ctx.root.chunk_size = 0;
+	ctx.root.i_ino = 0;
+	timespec_get(&ctx.root.mtime, TIME_UTC);
+	timespec_get(&ctx.root.ctime, TIME_UTC);
+	ctx.root.entries.rbh_root = NULL;
 
 	ucs_status_t status;
 	ucp_params_t ucp_params = {
 	    .field_mask = UCP_PARAM_FIELD_FEATURES,
 	    .features = UCP_FEATURE_RMA | UCP_FEATURE_AM,
 	};
-	if ((status = ucp_init(&ucp_params, NULL, &ctx->ucp_context)) !=
+	if ((status = ucp_init(&ucp_params, NULL, &ctx.ucp_context)) !=
 	    UCS_OK) {
 		log_error("ucp_init() failed: %s", ucs_status_string(status));
 		return (-1);
@@ -1146,8 +1127,8 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 	ucp_worker_params_t ucp_worker_params = {
 	    .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
 	    .thread_mode = UCS_THREAD_MODE_SINGLE};
-	if ((status = ucp_worker_create(ctx->ucp_context, &ucp_worker_params,
-					&ctx->ucp_worker)) != UCS_OK) {
+	if ((status = ucp_worker_create(ctx.ucp_context, &ucp_worker_params,
+					&ctx.ucp_worker)) != UCS_OK) {
 		log_error("ucp_worker_create() failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1159,9 +1140,8 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_MKDIR_REQ,
 	    .cb = fs_rpc_mkdir_recv,
-	    .arg = ctx,
 	};
-	if ((status = ucp_worker_set_am_recv_handler(ctx->ucp_worker,
+	if ((status = ucp_worker_set_am_recv_handler(ctx.ucp_worker,
 						     &mkdir_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(mkdir) failed: %s",
 			  ucs_status_string(status));
@@ -1173,10 +1153,9 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_INODE_CREATE_REQ,
 	    .cb = fs_rpc_inode_create_recv,
-	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx->ucp_worker, &inode_create_param)) != UCS_OK) {
+		 ctx.ucp_worker, &inode_create_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(create) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1187,10 +1166,9 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_INODE_UNLINK_REQ,
 	    .cb = fs_rpc_inode_unlink_recv,
-	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx->ucp_worker, &inode_unlink_param)) != UCS_OK) {
+		 ctx.ucp_worker, &inode_unlink_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(unlink) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1201,10 +1179,9 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_INODE_STAT_REQ,
 	    .cb = fs_rpc_inode_stat_recv,
-	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx->ucp_worker, &inode_stat_param)) != UCS_OK) {
+		 ctx.ucp_worker, &inode_stat_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(stat) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1215,10 +1192,9 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_INODE_WRITE_REQ,
 	    .cb = fs_rpc_inode_write_recv,
-	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx->ucp_worker, &inode_write_param)) != UCS_OK) {
+		 ctx.ucp_worker, &inode_write_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(write) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1229,10 +1205,9 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_INODE_READ_REQ,
 	    .cb = fs_rpc_inode_read_recv,
-	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx->ucp_worker, &inode_read_param)) != UCS_OK) {
+		 ctx.ucp_worker, &inode_read_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(write) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1243,10 +1218,9 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_DIR_MOVE_REQ,
 	    .cb = fs_rpc_dir_move_recv,
-	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx->ucp_worker, &dir_move_param)) != UCS_OK) {
+		 ctx.ucp_worker, &dir_move_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(dir move) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1257,10 +1231,9 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_INODE_STAT_UPDATE_REQ,
 	    .cb = fs_rpc_inode_stat_update_recv,
-	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx->ucp_worker, &inode_stat_update_param)) != UCS_OK) {
+		 ctx.ucp_worker, &inode_stat_update_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(stat update) failed: %s",
 		    ucs_status_string(status));
@@ -1272,10 +1245,9 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_READDIR_REQ,
 	    .cb = fs_rpc_readdir_recv,
-	    .arg = ctx,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx->ucp_worker, &readdir_param)) != UCS_OK) {
+		 ctx.ucp_worker, &readdir_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(readdir) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1286,27 +1258,24 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int trank,
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
 	    .id = RPC_FIND_REQ,
 	    .cb = fs_rpc_find_recv,
-	    .arg = ctx,
 	};
-	if ((status = ucp_worker_set_am_recv_handler(ctx->ucp_worker,
+	if ((status = ucp_worker_set_am_recv_handler(ctx.ucp_worker,
 						     &find_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(find) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}
 
-	ctx->fs = fs_inode_init(db_dir, db_size, trank);
+	ctx.fs = fs_inode_init(db_dir, db_size, lrank);
 	return (0);
 }
 
 int
-fs_server_get_address(int trank, void **addr, size_t *addr_len)
+fs_server_get_address(void **addr, size_t *addr_len)
 {
-	struct worker_ctx *ctx = &all_ctx[trank];
 	ucs_status_t status;
-	if ((status =
-		 ucp_worker_get_address(ctx->ucp_worker, (ucp_address_t **)addr,
-					addr_len)) != UCS_OK) {
+	if ((status = ucp_worker_get_address(
+		 ctx.ucp_worker, (ucp_address_t **)addr, addr_len)) != UCS_OK) {
 		log_error("ucp_worker_get_address() failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1315,30 +1284,26 @@ fs_server_get_address(int trank, void **addr, size_t *addr_len)
 }
 
 void
-fs_server_release_address(int trank, void *addr)
+fs_server_release_address(void *addr)
 {
-	struct worker_ctx *ctx = &all_ctx[trank];
-	ucp_worker_release_address(ctx->ucp_worker, addr);
+	ucp_worker_release_address(ctx.ucp_worker, addr);
 }
 
 int
 fs_server_term(int trank)
 {
-	struct worker_ctx *ctx = &all_ctx[trank];
-	free_meta_tree(&ctx->root);
-	ucp_worker_destroy(ctx->ucp_worker);
-	ucp_cleanup(ctx->ucp_context);
-	fs_inode_term(ctx->fs);
+	free_meta_tree(&ctx.root);
+	ucp_worker_destroy(ctx.ucp_worker);
+	ucp_cleanup(ctx.ucp_context);
+	fs_inode_term(ctx.fs);
 	return (0);
 }
 
 void *
-fs_server_progress(void *arg)
+fs_server_progress()
 {
-	int trank = *(int *)arg;
-	struct worker_ctx *ctx = &all_ctx[trank];
-	while (*ctx->shutdown == 0) {
-		ucp_worker_progress(ctx->ucp_worker);
+	while (*ctx.shutdown == 0) {
+		ucp_worker_progress(ctx.ucp_worker);
 	}
 	return (NULL);
 }

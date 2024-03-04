@@ -42,8 +42,8 @@ int fs_client_init(char *addrfile);
 int fs_client_term(void);
 
 int fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs,
-		   int trank, int nthreads, int *shutdown);
-int fs_server_get_address(int trank, void **addr, size_t *addr_len);
-void fs_server_release_address(int trank, void *addr);
-int fs_server_term(int trank);
-void *fs_server_progress(void *arg);
+		   int lrank, int lnprocs, int *shutdown);
+int fs_server_get_address(void **addr, size_t *addr_len);
+void fs_server_release_address(void *addr);
+int fs_server_term();
+void *fs_server_progress();

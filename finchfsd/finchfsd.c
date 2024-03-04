@@ -17,7 +17,9 @@
 typedef struct {
 	int rank;
 	int nprocs;
-	int nthreads;
+	int lrank;
+	int lnprocs;
+	MPI_Comm lcomm;
 	int shutdown;
 	char *db_dir;
 	size_t db_size;
@@ -40,23 +42,12 @@ handle_sig(void *arg)
 int
 dump_addrfile(finchfsd_ctx_t *ctx)
 {
-	int vprocs;
-	void *addr_allthreads;
+	void *addr;
 	size_t addr_len;
 	int fd;
 
-	vprocs = ctx->nprocs * ctx->nthreads;
-
-	for (int i = 0; i < ctx->nthreads; i++) {
-		void *addr;
-		if (fs_server_get_address(i, &addr, &addr_len)) {
-			return (-1);
-		}
-		if (i == 0) {
-			addr_allthreads = malloc(addr_len * ctx->nthreads);
-		}
-		memcpy(addr_allthreads + addr_len * i, addr, addr_len);
-		fs_server_release_address(i, addr);
+	if (fs_server_get_address(&addr, &addr_len)) {
+		return (-1);
 	}
 
 	fd = creat(DUMP_ADDR_FILE, S_IWUSR | S_IRUSR);
@@ -70,26 +61,27 @@ dump_addrfile(finchfsd_ctx_t *ctx)
 		return (-1);
 	}
 
-	if (write(fd, &vprocs, sizeof(vprocs)) != sizeof(vprocs)) {
+	if (write(fd, &ctx->nprocs, sizeof(ctx->nprocs)) !=
+	    sizeof(ctx->nprocs)) {
 		log_error("write() failed: %s", strerror(errno));
 		close(fd);
 		return (-1);
 	}
 
-	uint8_t *addr_allvprocs = malloc(addr_len * vprocs);
-	MPI_Allgather(addr_allthreads, addr_len * ctx->nthreads, MPI_BYTE,
-		      addr_allvprocs, addr_len * ctx->nthreads, MPI_BYTE,
-		      MPI_COMM_WORLD);
-	free(addr_allthreads);
+	uint8_t *addr_allprocs = malloc(addr_len * ctx->nprocs);
+	MPI_Allgather(addr, addr_len, MPI_BYTE, addr_allprocs, addr_len,
+		      MPI_BYTE, MPI_COMM_WORLD);
+	fs_server_release_address(addr);
 
-	if (write(fd, addr_allvprocs, addr_len * vprocs) != addr_len * vprocs) {
+	if (write(fd, addr_allprocs, addr_len * ctx->nprocs) !=
+	    addr_len * ctx->nprocs) {
 		log_error("write() failed: %s", strerror(errno));
-		free(addr_allvprocs);
+		free(addr_allprocs);
 		close(fd);
 		return (-1);
 	}
 	close(fd);
-	free(addr_allvprocs);
+	free(addr_allprocs);
 	return (0);
 }
 
@@ -100,22 +92,16 @@ main(int argc, char **argv)
 	    .shutdown = 0,
 	    .db_dir = "/tmp/finch_data",
 	    .db_size = 1024 * 1024 * 1024,
-	    .nthreads = 1,
 	};
 	pthread_t handler_thread;
-	pthread_t *worker_threads;
-	int *worker_thread_args;
 	int c;
-	while ((c = getopt(argc, argv, "d:v:t:s:")) != -1) {
+	while ((c = getopt(argc, argv, "d:v:s:")) != -1) {
 		switch (c) {
 		case 'd':
 			ctx.db_dir = strdup(optarg);
 			break;
 		case 'v':
 			log_set_level(optarg);
-			break;
-		case 't':
-			ctx.nthreads = atoi(optarg);
 			break;
 		case 's':
 			ctx.db_size = atol(optarg);
@@ -139,14 +125,15 @@ main(int argc, char **argv)
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &ctx.rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &ctx.nprocs);
+	MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, ctx.rank,
+			    MPI_INFO_NULL, &ctx.lcomm);
+	MPI_Comm_rank(ctx.lcomm, &ctx.lrank);
+	MPI_Comm_size(ctx.lcomm, &ctx.lnprocs);
 
-	for (int i = 0; i < ctx.nthreads; i++) {
-		if (fs_server_init(ctx.db_dir, ctx.db_size, ctx.rank,
-				   ctx.nprocs, i, ctx.nthreads,
-				   &ctx.shutdown)) {
-			log_fatal("fs_server_init() failed");
-			return (-1);
-		}
+	if (fs_server_init(ctx.db_dir, ctx.db_size, ctx.rank, ctx.nprocs,
+			   ctx.lrank, ctx.lnprocs, &ctx.shutdown)) {
+		log_fatal("fs_server_init() failed");
+		return (-1);
 	}
 
 	if (dump_addrfile(&ctx)) {
@@ -155,26 +142,8 @@ main(int argc, char **argv)
 	}
 	MPI_Finalize();
 
-	worker_threads = malloc(sizeof(pthread_t) * ctx.nthreads);
-	worker_thread_args = malloc(sizeof(int) * ctx.nthreads);
-	for (int i = ctx.nthreads - 1; i >= 0; i--) {
-		worker_thread_args[i] = i;
-		if (i > 0) {
-			pthread_create(&worker_threads[i], NULL,
-				       fs_server_progress,
-				       &worker_thread_args[i]);
-		} else {
-			fs_server_progress(&worker_thread_args[i]);
-		}
-	}
-	for (int i = 0; i < ctx.nthreads; i++) {
-		if (i > 0) {
-			pthread_join(worker_threads[i], NULL);
-		}
-		fs_server_term(i);
-	}
+	fs_server_progress();
+	fs_server_term();
 
-	free(worker_threads);
-	free(worker_thread_args);
 	return (0);
 }

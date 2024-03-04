@@ -18,7 +18,7 @@ struct fs_ctx {
 };
 
 struct fs_ctx *
-fs_inode_init(char *db_dir, size_t db_size, int trank)
+fs_inode_init(char *db_dir, size_t db_size, int lrank)
 {
 	int ret;
 	ret = chdir(db_dir);
