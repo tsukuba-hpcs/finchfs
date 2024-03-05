@@ -9,7 +9,6 @@ Run finchfsd
 
 * ``-c db_dir`` : specifies a database directory or a DAX device. If the directory does not exist, it will be created.
 * ``-s db_size`` : specifies a database size. This option is only effective when using the pmemkv and fsdax. Default is 1 GiB.
-* ``-t num_threads`` : specifies the number of threads of the finchfsd. Default is 1.
 * ``-v log_level`` : specifies the log level (e.g. debug). Default is info.
 
 An example of a script is the following.
@@ -18,19 +17,11 @@ An example of a script is the following.
 
     NUM_NODES=10
     NUM_CLIENTS=$((NUM_NODES * 24)) # ppn is 24
-    NUM_THREADS=8
+    FINCHFSD_PPN=8
     FINCH_DB_SIZE=$((1024 * 1024 * 1024 * 1024)) # 1 TiB
-    export UCX_IB_MLX5_DEVX=n
-    export UCX_IB_REG_METHODS=odp,direct
     export UCX_NUM_EPS=$NUM_CLIENTS
-    mpirun -np $NUM_NODES -hostfile /path/to/hostfile --map-by ppr:1:node:PE=$NUM_THREADS -x UCX_IB_MLX5_DEVX -x UCX_IB_REG_METHODS -x UCX_NUM_EPS finchfsd -t $NUM_THREADS -c /scr -s $FINCH_DB_SIZE -v debug &
+    mpirun -np $((NUM_NODES*FINCHFSD_PPN)) -hostfile /path/to/hostfile --map-by ppr:$FINCHFSD_PPN:node:PE=1 -x UCX_NUM_EPS finchfsd -c /scr -s $FINCH_DB_SIZE -v debug &
     sleep 5 # wait for finchfsd to start
-
-.. warning::
-
-    We must set ``UCX_IB_MLX5_DEVX``, ``UCX_IB_REG_METHODS``, and ``UCX_NUM_EPS``.
-    ``UCX_IB_MLX5_DEVX`` and ``UCX_IB_REG_METHODS`` are for enabling the RDMA on demand paging and disabling rcache because there is a problem with it.
-    ``UCX_NUM_EPS`` is for setting the number of endpoints and use `DC transport <https://www.openfabrics.org/images/eventpresos/workshops2014/DevWorkshop/presos/Monday/pdf/05_DC_Verbs.pdf>`_.
 
 When we use pmemkv backend with devdax mode, 
 we need to create namespaces for the number of threads, by `ndctl <https://docs.pmem.io/ndctl-user-guide/ndctl-man-pages/ndctl-create-namespace>`_.
@@ -38,7 +29,7 @@ We specify the ``-c /dev/dax0.%d`` option to ``finchfsd``, then ``finchfsd`` use
 
 .. code-block:: bash
 
-    mpirun -np $NUM_NODES --map-by ppr:1:node:PE=$NUM_THREADS -x UCX_IB_MLX5_DEVX -x UCX_IB_REG_METHODS -x UCX_NUM_EPS finchfsd -t $NUM_THREADS -c /dev/dax0.%d -s $FINCH_DB_SIZE -v debug &
+    mpirun -np $((NUM_NODES*FINCHFSD_PPN)) --map-by ppr:$FINCHFSD_PPN:node:PE=1 -x UCX_NUM_EPS finchfsd -c /dev/dax0.%d -s $FINCH_DB_SIZE -v debug &
 
 ``/tmp/finchfsd`` is the `address file` and generated on the compute node where finchfsd is started.
 FINCHFS client library connect to finchfsd by the address file.
