@@ -14,9 +14,7 @@
 #include "find.h"
 
 struct entry;
-struct entrytree {
-	struct entry *rbh_root;
-};
+RB_HEAD(entrytree, entry);
 struct entry {
 	char *name;
 	mode_t mode;
@@ -31,6 +29,14 @@ struct entry {
 };
 
 typedef struct entry entry_t;
+
+static int
+entry_compare(entry_t *a, entry_t *b)
+{
+	return strcmp(a->name, b->name);
+}
+
+RB_GENERATE(entrytree, entry, link, entry_compare);
 
 struct worker_ctx {
 	int rank;
@@ -71,14 +77,6 @@ alloc_ino(struct worker_ctx *ctx)
 	ctx->i_ino += ctx->nprocs;
 	return (i_ino);
 }
-
-static int
-entry_compare(entry_t *a, entry_t *b)
-{
-	return strcmp(a->name, b->name);
-}
-
-RB_GENERATE(entrytree, entry, link, entry_compare);
 
 static void
 free_meta_tree(entry_t *entry)
