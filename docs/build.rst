@@ -5,7 +5,7 @@ Build FINCHFS
 Requirements
 ============
 
-* `UCX <https://openucx.readthedocs.io/en/master/>`_ v1.14.1
+* `UCX <https://openucx.readthedocs.io/en/master/>`_
 * `pmemkv <https://pmem.io/pmemkv/>`_ (For pmemkv backend)
 
 Quick installation steps
@@ -24,6 +24,8 @@ Build from source
 
 .. code-block:: bash
 
+    $ git clone git@github.com:tsukuba-hpcs/finchfs.git
+    $ cd finchfs
     $ autoreconf -i
     $ ./configure [--prefix=PREFIX] [--with-pmemkv]
     $ make
