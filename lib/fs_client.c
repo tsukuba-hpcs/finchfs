@@ -13,6 +13,7 @@
 #include "log.h"
 #include "fs_types.h"
 #include "fs_rpc.h"
+#include "murmur3.h"
 
 static struct env {
 	ucp_context_h ucp_context;
@@ -565,25 +566,17 @@ fs_client_term(void)
 static int
 path_to_target_hash(const char *path, int div)
 {
-	long h = 0;
+	uint32_t h = 0;
 	int slash = -1;
 	char *head = (char *)path;
-	char *next;
-	long n;
+	char *p;
 	for (int i = 0; head[i] != '\0'; i++) {
 		if (head[i] == '/') {
 			slash = i;
 		}
 	}
-	for (char *p = head + slash + 1; *p != '\0'; p = next) {
-		n = strtol(p, &next, 10);
-		if (next == p) {
-			h += *p;
-			next++;
-			continue;
-		}
-		h += n;
-	}
+	p = head + slash + 1;
+	MurmurHash3_x86_32(p, strlen(p), 1234, &h);
 	return (int)(h % div);
 }
 
