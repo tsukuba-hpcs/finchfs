@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <pthread.h>
 #include "config.h"
 #include "finchfs.h"
 #include "fs_types.h"
@@ -15,6 +16,7 @@
 
 static size_t finchfs_chunk_size = 65536;
 static const int fd_table_size = 1024;
+static pthread_mutex_t pmu;
 static struct fd_table {
 	char *path;
 	mode_t mode;
@@ -23,6 +25,7 @@ static struct fd_table {
 	size_t size;
 	uint64_t i_ino;
 	uint64_t eid;
+	pthread_mutex_t mu;
 } *fd_table;
 
 #define IS_NULL_STRING(str) (str == NULL || str[0] == '\0')
@@ -43,9 +46,14 @@ finchfs_init(const char *addrfile)
 	if (fs_client_init((char *)addrfile)) {
 		return (-1);
 	}
+	pthread_mutex_init(&pmu, NULL);
+	pthread_mutexattr_t attr;
+	pthread_mutexattr_init(&attr);
+	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
 	fd_table = malloc(sizeof(struct fd_table) * fd_table_size);
 	for (int i = 0; i < fd_table_size; ++i) {
 		fd_table[i].path = NULL;
+		pthread_mutex_init(&fd_table[i].mu, &attr);
 	}
 	return 0;
 }
@@ -53,12 +61,16 @@ finchfs_init(const char *addrfile)
 int
 finchfs_term()
 {
+	pthread_mutex_lock(&pmu);
 	for (int i = 0; i < fd_table_size; ++i) {
 		if (fd_table[i].path) {
 			free(fd_table[i].path);
 		}
+		pthread_mutex_destroy(&fd_table[i].mu);
 	}
 	free(fd_table);
+	pthread_mutex_unlock(&pmu);
+	pthread_mutex_destroy(&pmu);
 	return fs_client_term();
 }
 
@@ -90,6 +102,7 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 	char *p = canonical_path(path);
 	int ret;
 	int fd;
+	pthread_mutex_lock(&pmu);
 	for (fd = 0; fd < fd_table_size; ++fd) {
 		if (fd_table[fd].path == NULL) {
 			break;
@@ -97,6 +110,7 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 	}
 	if (fd == fd_table_size) {
 		errno = EMFILE;
+		pthread_mutex_unlock(&pmu);
 		return (-1);
 	}
 	fd_table[fd].path = p;
@@ -106,15 +120,18 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 	fd_table[fd].i_ino = 0;
 	fd_table[fd].size = 0;
 	fd_table[fd].eid = 0;
-
+	pthread_mutex_unlock(&pmu);
 	mode |= S_IFREG;
+	pthread_mutex_lock(&fd_table[fd].mu);
 	ret = fs_rpc_inode_create(p, mode, chunk_size, &fd_table[fd].i_ino,
 				  &fd_table[fd].size, &fd_table[fd].eid);
 	if (ret) {
 		free(fd_table[fd].path);
 		fd_table[fd].path = NULL;
+		pthread_mutex_unlock(&fd_table[fd].mu);
 		return (-1);
 	}
+	pthread_mutex_unlock(&fd_table[fd].mu);
 	return (fd);
 }
 
@@ -125,6 +142,7 @@ finchfs_open(const char *path, int32_t flags)
 	char *p = canonical_path(path);
 	int ret;
 	int fd;
+	pthread_mutex_lock(&pmu);
 	for (fd = 0; fd < fd_table_size; ++fd) {
 		if (fd_table[fd].path == NULL) {
 			break;
@@ -132,21 +150,26 @@ finchfs_open(const char *path, int32_t flags)
 	}
 	if (fd == fd_table_size) {
 		errno = EMFILE;
+		pthread_mutex_unlock(&pmu);
 		return (-1);
 	}
 	fd_table[fd].path = p;
 	fd_table[fd].pos = 0;
+	pthread_mutex_unlock(&pmu);
 	fs_stat_t st;
+	pthread_mutex_lock(&fd_table[fd].mu);
 	ret = fs_rpc_inode_stat(p, &st, 1);
 	if (ret) {
 		free(fd_table[fd].path);
 		fd_table[fd].path = NULL;
+		pthread_mutex_unlock(&fd_table[fd].mu);
 		return (-1);
 	}
 	if (S_ISDIR(st.mode)) {
 		log_error("directory open is not supported");
 		free(fd_table[fd].path);
 		fd_table[fd].path = NULL;
+		pthread_mutex_unlock(&fd_table[fd].mu);
 		return (-1);
 	}
 	fd_table[fd].i_ino = st.i_ino;
@@ -156,6 +179,7 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].eid = st.eid;
 	log_debug("finchfs_open() called path=%s inode=%d chunk_size=%zu", path,
 		  st.i_ino, st.chunk_size);
+	pthread_mutex_unlock(&fd_table[fd].mu);
 	return (fd);
 }
 
@@ -168,10 +192,12 @@ finchfs_close(int fd)
 		return (-1);
 	}
 	int ret;
+	pthread_mutex_lock(&fd_table[fd].mu);
 	ret = fs_rpc_inode_close(fd_table[fd].path, fd_table[fd].eid,
 				 fd_table[fd].size);
 	free(fd_table[fd].path);
 	fd_table[fd].path = NULL;
+	pthread_mutex_unlock(&fd_table[fd].mu);
 	return (ret);
 }
 
@@ -207,6 +233,7 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 	ret = 0;
 	tot = 0;
 	buf_p = (void *)buf;
+	pthread_mutex_lock(&fd_table[fd].mu);
 	for (int i = 0; i < nchunks; ++i) {
 		size_t local_size = chunk_size - local_pos;
 		if (local_size > size - tot) {
@@ -233,6 +260,7 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 		}
 		fs_async_rpc_inode_write_wait(hdles, nreq);
 		free(hdles);
+		pthread_mutex_unlock(&fd_table[fd].mu);
 		return (ret);
 	}
 	ret = fs_async_rpc_inode_write_wait(hdles, nchunks);
@@ -246,6 +274,7 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 	if (ret >= 0 && offset + ret > fd_table[fd].size) {
 		fd_table[fd].size = offset + ret;
 	}
+	pthread_mutex_unlock(&fd_table[fd].mu);
 	return (ret);
 }
 
@@ -258,10 +287,12 @@ finchfs_write(int fd, const void *buf, size_t size)
 		errno = EBADF;
 		return (-1);
 	}
+	pthread_mutex_lock(&fd_table[fd].mu);
 	ret = finchfs_pwrite(fd, buf, size, fd_table[fd].pos);
 	if (ret >= 0) {
 		fd_table[fd].pos += ret;
 	}
+	pthread_mutex_unlock(&fd_table[fd].mu);
 	return (ret);
 }
 
@@ -297,6 +328,7 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 	ret = 0;
 	tot = 0;
 	buf_p = (void *)buf;
+	pthread_mutex_lock(&fd_table[fd].mu);
 	for (int i = 0; i < nchunks; ++i) {
 		size_t local_size = chunk_size - local_pos;
 		if (local_size > size - tot) {
@@ -323,6 +355,7 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 		}
 		fs_async_rpc_inode_read_wait(hdles, nreq, fd_table[fd].size);
 		free(hdles);
+		pthread_mutex_unlock(&fd_table[fd].mu);
 		return (ret);
 	}
 	ret = fs_async_rpc_inode_read_wait(hdles, nchunks, fd_table[fd].size);
@@ -336,6 +369,7 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 	if (ret >= 0 && offset + ret > fd_table[fd].size) {
 		fd_table[fd].size = offset + ret;
 	}
+	pthread_mutex_unlock(&fd_table[fd].mu);
 	return (ret);
 }
 
@@ -348,10 +382,12 @@ finchfs_read(int fd, void *buf, size_t size)
 		errno = EBADF;
 		return (-1);
 	}
+	pthread_mutex_lock(&fd_table[fd].mu);
 	ret = finchfs_pread(fd, buf, size, fd_table[fd].pos);
 	if (ret >= 0) {
 		fd_table[fd].pos += ret;
 	}
+	pthread_mutex_unlock(&fd_table[fd].mu);
 	return (ret);
 }
 
@@ -364,6 +400,8 @@ finchfs_seek(int fd, off_t offset, int whence)
 		errno = EBADF;
 		return (-1);
 	}
+	off_t o;
+	pthread_mutex_lock(&fd_table[fd].mu);
 	switch (whence) {
 	case SEEK_SET:
 		fd_table[fd].pos = offset;
@@ -378,6 +416,8 @@ finchfs_seek(int fd, off_t offset, int whence)
 		errno = EINVAL;
 		return (-1);
 	}
+	o = fd_table[fd].pos;
+	pthread_mutex_unlock(&fd_table[fd].mu);
 	return (fd_table[fd].pos);
 }
 
@@ -390,8 +430,10 @@ finchfs_fsync(int fd)
 		return (-1);
 	}
 	int ret;
+	pthread_mutex_lock(&fd_table[fd].mu);
 	ret = fs_rpc_inode_fsync(fd_table[fd].path, fd_table[fd].eid,
 				 &fd_table[fd].size);
+	pthread_mutex_unlock(&fd_table[fd].mu);
 	return (ret);
 }
 
