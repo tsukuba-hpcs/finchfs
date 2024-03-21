@@ -622,8 +622,12 @@ path_to_target_hash(const char *path, int div)
 int
 fs_rpc_mkdir(const char *path, mode_t mode)
 {
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (-1);
+		}
+	}
 	ucp_dt_iov_t iov[2];
 	iov[0].buffer = (void *)path;
 	iov[0].length = strlen(path) + 1;
@@ -714,8 +718,12 @@ int
 fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 		    uint64_t *i_ino, size_t *size, uint64_t *eid)
 {
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (-1);
+		}
+	}
 	int target = path_to_target_hash(path, env.nprocs);
 	ucp_dt_iov_t iov[5];
 	iov[0].buffer = (void *)path;
@@ -838,8 +846,12 @@ fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
 int
 fs_rpc_inode_unlink_all(const char *path)
 {
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (-1);
+		}
+	}
 	ucp_dt_iov_t iov[1];
 	iov[0].buffer = (void *)path;
 	iov[0].length = strlen(path) + 1;
@@ -924,8 +936,12 @@ fs_rpc_inode_unlink_all(const char *path)
 int
 fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open)
 {
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (-1);
+		}
+	}
 	int target = path_to_target_hash(path, env.nprocs);
 	ucp_dt_iov_t iov[2];
 	iov[0].buffer = &open;
@@ -989,8 +1005,12 @@ fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open)
 int
 fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size)
 {
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (-1);
+		}
+	}
 	int target = path_to_target_hash(path, env.nprocs);
 	size_t ssize = (*size) << 1;
 	ucp_dt_iov_t iov[2];
@@ -1051,8 +1071,12 @@ fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size)
 int
 fs_rpc_inode_close(const char *path, uint64_t eid, size_t size)
 {
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (-1);
+		}
+	}
 	int target = path_to_target_hash(path, env.nprocs);
 	size_t ssize = (size << 1) + 1;
 	ucp_dt_iov_t iov[2];
@@ -1099,8 +1123,12 @@ fs_async_rpc_inode_write(uint64_t i_ino, uint64_t index, off_t offset,
 		log_error("fs_rpc_inode_write: size is 0");
 		return (NULL);
 	}
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (NULL);
+		}
+	}
 	int target = (i_ino + index) % env.nprocs;
 	inode_write_handle_t *handle = malloc(sizeof(inode_write_handle_t));
 	log_debug("fs_async_rpc_inode_write: i_ino=%zu index=%zu offset=%ld",
@@ -1215,8 +1243,12 @@ fs_async_rpc_inode_read(uint64_t i_ino, uint64_t index, off_t offset,
 		log_error("fs_async_rpc_inode_read: size is 0");
 		return (NULL);
 	}
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (NULL);
+		}
+	}
 
 	int target = (i_ino + index) % env.nprocs;
 	inode_read_handle_t *handle = malloc(sizeof(inode_read_handle_t));
@@ -1375,8 +1407,12 @@ int
 fs_rpc_readdir(const char *path, void *arg,
 	       void (*filler)(void *, const char *, const struct stat *))
 {
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (-1);
+		}
+	}
 	ucp_dt_iov_t iov[1];
 	iov[0].buffer = (void *)path;
 	iov[0].length = strlen(path) + 1;
@@ -1463,8 +1499,12 @@ fs_rpc_readdir(const char *path, void *arg,
 int
 fs_rpc_dir_move(const char *oldpath, const char *newpath)
 {
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (-1);
+		}
+	}
 	ucp_dt_iov_t iov[2];
 	iov[0].buffer = (void *)oldpath;
 	iov[0].length = strlen(oldpath) + 1;
@@ -1555,8 +1595,12 @@ fs_rpc_find(const char *path, const char *query,
 	    struct finchfs_find_param *param, void *arg,
 	    void (*filler)(void *, const char *))
 {
-	if (tlenv.ucp_worker == NULL)
-		fs_tlenv_init();
+	if (tlenv.ucp_worker == NULL) {
+		if (fs_tlenv_init() < 0) {
+			log_error("fs_tlenv_init() failed");
+			return (-1);
+		}
+	}
 	ucp_dt_iov_t iov[3];
 	iov[0].buffer = (void *)path;
 	iov[0].length = strlen(path) + 1;
