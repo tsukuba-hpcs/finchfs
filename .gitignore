@@ -31,6 +31,7 @@ tests/finchfs_test
 tests/*.o
 tests/*.a
 tests/find_test
+tests/multithread_test
 finchfsd/.deps
 finchfsd/.libs
 finchfsd/finchfsd

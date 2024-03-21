@@ -1,6 +1,6 @@
 lib_LTLIBRARIES = libfinchfs.la
 include_HEADERS = finchfs.h
-noinst_HEADERS = log.h fs_rpc.h fs_types.h path.h
+noinst_HEADERS = log.h fs_rpc.h fs_types.h path.h tree.h
 
 libfinchfs_la_SOURCES = finchfs.c log.c fs_client.c path.c
 

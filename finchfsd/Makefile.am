@@ -1,6 +1,6 @@
 sbin_PROGRAMS = finchfsd
 finchfsd_SOURCES = finchfsd.c fs_server.c find.c
-noinst_HEADERS = fs.h tree.h find.h
+noinst_HEADERS = fs.h find.h
 
 if USE_PMEMKV
 finchfsd_SOURCES += fs_pmemkv.c

@@ -8,18 +8,38 @@
 #include <syslog.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <pthread.h>
 #include "finchfs.h"
 #include "config.h"
 #include "log.h"
 #include "fs_types.h"
 #include "fs_rpc.h"
+#include "tree.h"
+
+struct tlenv;
+RB_HEAD(tlenvs, tlenv);
+struct tlenv {
+	ucp_worker_h ucp_worker;
+	ucp_ep_h *ucp_eps;
+	RB_ENTRY(tlenv) link;
+};
 
 static struct env {
 	ucp_context_h ucp_context;
-	ucp_worker_h ucp_worker;
-	ucp_ep_h *ucp_eps;
+	struct tlenvs tlenvs;
+	char addrfile[1024];
 	int nprocs;
 } env;
+
+static _Thread_local struct tlenv tlenv;
+
+static int
+tlenv_compare(struct tlenv *a, struct tlenv *b)
+{
+	return a < b;
+}
+
+RB_GENERATE(tlenvs, tlenv, link, tlenv_compare);
 
 ucs_status_t
 fs_rpc_ret_reply(void *arg, const void *header, size_t header_length,
@@ -175,7 +195,7 @@ fs_rpc_inode_read_reply(void *arg, const void *header, size_t header_length,
 		    .user_data = user_data,
 		};
 		ucs_status_ptr_t req =
-		    ucp_am_recv_data_nbx(env.ucp_worker, data, handle->buf,
+		    ucp_am_recv_data_nbx(tlenv.ucp_worker, data, handle->buf,
 					 user_data->size, &rparam);
 		if (req == NULL) {
 			log_debug("ucp_am_recv_data_nbx completed immediately");
@@ -295,17 +315,15 @@ ep_err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 }
 
 int
-fs_client_init(char *addrfile)
+fs_tlenv_init()
 {
-	size_t addr_len;
 	int fd;
 	uint8_t *addr_allprocs;
+	size_t addr_len;
 	ucs_status_t status;
+	log_debug("fs_tlenv_init() thread id=%d", pthread_self());
 
-	if (addrfile == NULL) {
-		addrfile = DUMP_ADDR_FILE;
-	}
-	fd = open(addrfile, O_RDONLY);
+	fd = open(env.addrfile, O_RDONLY);
 	if (fd < 0) {
 		log_error("open() failed: %s", strerror(errno));
 		return (-1);
@@ -331,27 +349,16 @@ fs_client_init(char *addrfile)
 	}
 	close(fd);
 
-	ucp_params_t ucp_params = {
-	    .field_mask = UCP_PARAM_FIELD_FEATURES,
-	    .features = UCP_FEATURE_RMA | UCP_FEATURE_AM,
-	};
-	if ((status = ucp_init(&ucp_params, NULL, &env.ucp_context)) !=
-	    UCS_OK) {
-		log_error("ucp_init() failed: %s", ucs_status_string(status));
-		return (-1);
-	}
-
 	ucp_worker_params_t ucp_worker_params = {
 	    .field_mask = UCP_WORKER_PARAM_FIELD_THREAD_MODE,
 	    .thread_mode = UCS_THREAD_MODE_SINGLE};
 	if ((status = ucp_worker_create(env.ucp_context, &ucp_worker_params,
-					&env.ucp_worker)) != UCS_OK) {
+					&tlenv.ucp_worker)) != UCS_OK) {
 		log_error("ucp_worker_create() failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}
-
-	env.ucp_eps = malloc(sizeof(ucp_ep_h) * env.nprocs);
+	tlenv.ucp_eps = malloc(sizeof(ucp_ep_h) * env.nprocs);
 	for (int i = 0; i < env.nprocs; i++) {
 		ucp_ep_params_t ucp_ep_params = {
 		    .field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLER |
@@ -365,18 +372,17 @@ fs_client_init(char *addrfile)
 		    .err_mode = UCP_ERR_HANDLING_MODE_NONE,
 		    .address = (ucp_address_t *)(addr_allprocs + addr_len * i),
 		};
-		if ((status = ucp_ep_create(env.ucp_worker, &ucp_ep_params,
-					    &env.ucp_eps[i])) != UCS_OK) {
+		if ((status = ucp_ep_create(tlenv.ucp_worker, &ucp_ep_params,
+					    &tlenv.ucp_eps[i])) != UCS_OK) {
 			log_error("ucp_ep_create() failed: %s",
 				  ucs_status_string(status));
 			return (-1);
 		}
 		if (get_log_priority() == LOG_DEBUG) {
 			log_debug("ucp_ep[%d]:", i);
-			ucp_ep_print_info(env.ucp_eps[i], stderr);
+			ucp_ep_print_info(tlenv.ucp_eps[i], stderr);
 		}
 	}
-
 	ucp_am_handler_param_t ret_reply_param = {
 	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
 			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
@@ -386,7 +392,7 @@ fs_client_init(char *addrfile)
 	    .arg = NULL,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &ret_reply_param)) != UCS_OK) {
+		 tlenv.ucp_worker, &ret_reply_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(ret) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -400,7 +406,7 @@ fs_client_init(char *addrfile)
 	    .arg = NULL,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &inode_reply_param)) != UCS_OK) {
+		 tlenv.ucp_worker, &inode_reply_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(inode) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -414,7 +420,7 @@ fs_client_init(char *addrfile)
 	    .arg = NULL,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &inode_stat_reply_param)) != UCS_OK) {
+		 tlenv.ucp_worker, &inode_stat_reply_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(inode stat) failed: %s",
 		    ucs_status_string(status));
@@ -429,7 +435,7 @@ fs_client_init(char *addrfile)
 	    .arg = NULL,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &inode_write_reply_param)) != UCS_OK) {
+		 tlenv.ucp_worker, &inode_write_reply_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(inode write) failed: %s",
 		    ucs_status_string(status));
@@ -444,7 +450,7 @@ fs_client_init(char *addrfile)
 	    .arg = NULL,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &inode_read_reply_param)) != UCS_OK) {
+		 tlenv.ucp_worker, &inode_read_reply_param)) != UCS_OK) {
 		log_error(
 		    "ucp_worker_set_am_recv_handler(inode read) failed: %s",
 		    ucs_status_string(status));
@@ -459,7 +465,7 @@ fs_client_init(char *addrfile)
 	    .arg = NULL,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &readdir_reply_param)) != UCS_OK) {
+		 tlenv.ucp_worker, &readdir_reply_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(readdir) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -473,7 +479,7 @@ fs_client_init(char *addrfile)
 	    .arg = NULL,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &find_reply_param)) != UCS_OK) {
+		 tlenv.ucp_worker, &find_reply_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(find) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -487,13 +493,35 @@ fs_client_init(char *addrfile)
 	    .arg = NULL,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &fsync_reply_param)) != UCS_OK) {
+		 tlenv.ucp_worker, &fsync_reply_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(inode fsync) failed: "
 			  "%s",
 			  ucs_status_string(status));
 		return (-1);
 	}
+	RB_INSERT(tlenvs, &env.tlenvs, &tlenv);
 	return (0);
+}
+
+int
+fs_client_init(char *addrfile)
+{
+	ucs_status_t status;
+	if (addrfile == NULL) {
+		addrfile = DUMP_ADDR_FILE;
+	}
+	strcpy(env.addrfile, addrfile);
+	ucp_params_t ucp_params = {
+	    .field_mask = UCP_PARAM_FIELD_FEATURES,
+	    .features = UCP_FEATURE_RMA | UCP_FEATURE_AM,
+	};
+	if ((status = ucp_init(&ucp_params, NULL, &env.ucp_context)) !=
+	    UCS_OK) {
+		log_error("ucp_init() failed: %s", ucs_status_string(status));
+		return (-1);
+	}
+
+	return (fs_tlenv_init());
 }
 
 static int
@@ -531,33 +559,38 @@ fs_client_term(void)
 	    .op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS,
 	    .flags = UCP_EP_CLOSE_MODE_FORCE,
 	};
-
-	for (int i = 0; i < env.nprocs; i++) {
-		reqs[i] = ucp_ep_close_nbx(env.ucp_eps[i], &params);
-	}
-
-	while (!all_req_finish(reqs, env.nprocs)) {
-		ucp_worker_progress(env.ucp_worker);
-	}
-
+	struct tlenv *item;
 	int r = 0;
-	for (int i = 0; i < env.nprocs; i++) {
-		if (reqs[i] == NULL) {
-			continue;
+	while (1) {
+		item = RB_MIN(tlenvs, &env.tlenvs);
+		if (item == NULL) {
+			break;
 		}
-		if (UCS_PTR_IS_ERR(reqs[i])) {
-			log_error("ucp_ep_close_nbx() failed: %s",
-				  ucs_status_string(UCS_PTR_STATUS(reqs[i])));
-			r = -1;
+		RB_REMOVE(tlenvs, &env.tlenvs, item);
+		for (int i = 0; i < env.nprocs; i++) {
+			reqs[i] = ucp_ep_close_nbx(item->ucp_eps[i], &params);
 		}
-		ucp_request_free(reqs[i]);
+		while (!all_req_finish(reqs, env.nprocs)) {
+			ucp_worker_progress(item->ucp_worker);
+		}
+		for (int i = 0; i < env.nprocs; i++) {
+			if (reqs[i] == NULL) {
+				continue;
+			}
+			if (UCS_PTR_IS_ERR(reqs[i])) {
+				log_error(
+				    "ucp_ep_close_nbx() failed: %s",
+				    ucs_status_string(UCS_PTR_STATUS(reqs[i])));
+				r = -1;
+			}
+			ucp_request_free(reqs[i]);
+		}
+		free(item->ucp_eps);
+		ucp_worker_destroy(item->ucp_worker);
+		item->ucp_worker = NULL;
 	}
-
 	free(reqs);
-	free(env.ucp_eps);
-	ucp_worker_destroy(env.ucp_worker);
 	ucp_cleanup(env.ucp_context);
-
 	return (r);
 }
 
@@ -589,6 +622,8 @@ path_to_target_hash(const char *path, int div)
 int
 fs_rpc_mkdir(const char *path, mode_t mode)
 {
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 	ucp_dt_iov_t iov[2];
 	iov[0].buffer = (void *)path;
 	iov[0].length = strlen(path) + 1;
@@ -613,14 +648,14 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 
 	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nprocs);
 	for (int i = 0; i < env.nprocs; i++) {
-		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_MKDIR_REQ,
+		reqs[i] = ucp_am_send_nbx(tlenv.ucp_eps[i], RPC_MKDIR_REQ,
 					  &rets_addr[i], sizeof(void *), iov, 2,
 					  &rparam);
 	}
 
 	ucs_status_t status;
 	while (!all_req_finish(reqs, env.nprocs)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	int nokreq = 0;
 	int *okidx = malloc(sizeof(int) * env.nprocs);
@@ -651,7 +686,7 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 		rets[i] = &ret[okidx[i]];
 	}
 	while (!all_ret_finish(rets, nokreq)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	free(rets);
 	free(rets_addr);
@@ -679,6 +714,8 @@ int
 fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 		    uint64_t *i_ino, size_t *size, uint64_t *eid)
 {
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 	int target = path_to_target_hash(path, env.nprocs);
 	ucp_dt_iov_t iov[5];
 	iov[0].buffer = (void *)path;
@@ -708,12 +745,12 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 
 	ucs_status_ptr_t req;
 	req =
-	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_CREATE_REQ,
+	    ucp_am_send_nbx(tlenv.ucp_eps[target], RPC_INODE_CREATE_REQ,
 			    &handle_addr, sizeof(handle_addr), iov, 5, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	if (req != NULL) {
 		status = ucp_request_check_status(req);
@@ -728,7 +765,7 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 
 	log_debug("fs_rpc_inode_create: ucp_am_send_nbx() succeeded");
 	while (!all_ret_finish(&ret_addr, 1)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	if (handle.ret != FINCH_OK) {
 		log_error("fs_rpc_inode_create: create() failed: %s",
@@ -765,12 +802,12 @@ fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
 
 	ucs_status_ptr_t req;
 	req =
-	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_UNLINK_REQ,
+	    ucp_am_send_nbx(tlenv.ucp_eps[target], RPC_INODE_UNLINK_REQ,
 			    &handle_addr, sizeof(handle_addr), iov, 1, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	if (req != NULL) {
 		status = ucp_request_check_status(req);
@@ -785,7 +822,7 @@ fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
 
 	log_debug("fs_rpc_inode_unlink: ucp_am_send_nbx() succeeded");
 	while (!all_ret_finish(&ret_addr, 1)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	if (handle.ret != FINCH_OK) {
 		log_error("fs_rpc_inode_unlink: unlink() failed: %s",
@@ -801,6 +838,8 @@ fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
 int
 fs_rpc_inode_unlink_all(const char *path)
 {
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 	ucp_dt_iov_t iov[1];
 	iov[0].buffer = (void *)path;
 	iov[0].length = strlen(path) + 1;
@@ -822,12 +861,12 @@ fs_rpc_inode_unlink_all(const char *path)
 
 	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nprocs);
 	for (int i = 0; i < env.nprocs; i++) {
-		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_INODE_UNLINK_REQ,
-					  &handles[i], sizeof(handles[i]), iov,
-					  1, &rparam);
+		reqs[i] = ucp_am_send_nbx(tlenv.ucp_eps[i],
+					  RPC_INODE_UNLINK_REQ, &handles[i],
+					  sizeof(handles[i]), iov, 1, &rparam);
 	}
 	while (!all_req_finish(reqs, env.nprocs)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	int nokreq = 0;
 	int *okidx = malloc(sizeof(int) * env.nprocs);
@@ -853,7 +892,7 @@ fs_rpc_inode_unlink_all(const char *path)
 		rets[i] = &handles[okidx[i]]->ret;
 	}
 	while (!all_ret_finish(rets, nokreq)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	free(okidx);
 	free(rets);
@@ -885,6 +924,8 @@ fs_rpc_inode_unlink_all(const char *path)
 int
 fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open)
 {
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 	int target = path_to_target_hash(path, env.nprocs);
 	ucp_dt_iov_t iov[2];
 	iov[0].buffer = &open;
@@ -907,11 +948,11 @@ fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open)
 
 	ucs_status_ptr_t req;
 	req =
-	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_STAT_REQ,
+	    ucp_am_send_nbx(tlenv.ucp_eps[target], RPC_INODE_STAT_REQ,
 			    &handle_addr, sizeof(handle_addr), iov, 2, &rparam);
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	if (req != NULL) {
 		status = ucp_request_check_status(req);
@@ -926,7 +967,7 @@ fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open)
 
 	log_debug("fs_rpc_inode_stat: ucp_am_send_nbx() succeeded");
 	while (!all_ret_finish(&ret_addr, 1)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	if (handle.ret != FINCH_OK) {
 		if (handle.ret != FINCH_ENOENT) {
@@ -948,6 +989,8 @@ fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open)
 int
 fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size)
 {
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 	int target = path_to_target_hash(path, env.nprocs);
 	size_t ssize = (*size) << 1;
 	ucp_dt_iov_t iov[2];
@@ -971,12 +1014,12 @@ fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size)
 	};
 
 	ucs_status_ptr_t req;
-	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_STAT_UPDATE_REQ,
+	req = ucp_am_send_nbx(tlenv.ucp_eps[target], RPC_INODE_STAT_UPDATE_REQ,
 			      &handle_addr, sizeof(void *), iov, 2, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	if (req != NULL) {
 		status = ucp_request_check_status(req);
@@ -992,7 +1035,7 @@ fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size)
 
 	log_debug("fs_rpc_inode_fsync: ucp_am_send_nbx() succeeded");
 	while (!all_ret_finish(&ret_addr, 1)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	if (handle.ret != FINCH_OK) {
 		log_error("fs_rpc_inode_fsync: stat() failed: %s",
@@ -1008,6 +1051,8 @@ fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size)
 int
 fs_rpc_inode_close(const char *path, uint64_t eid, size_t size)
 {
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 	int target = path_to_target_hash(path, env.nprocs);
 	size_t ssize = (size << 1) + 1;
 	ucp_dt_iov_t iov[2];
@@ -1024,12 +1069,12 @@ fs_rpc_inode_close(const char *path, uint64_t eid, size_t size)
 	};
 
 	ucs_status_ptr_t req;
-	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_STAT_UPDATE_REQ,
+	req = ucp_am_send_nbx(tlenv.ucp_eps[target], RPC_INODE_STAT_UPDATE_REQ,
 			      NULL, 0, iov, 2, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	if (req != NULL) {
 		status = ucp_request_check_status(req);
@@ -1054,6 +1099,8 @@ fs_async_rpc_inode_write(uint64_t i_ino, uint64_t index, off_t offset,
 		log_error("fs_rpc_inode_write: size is 0");
 		return (NULL);
 	}
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 	int target = (i_ino + index) % env.nprocs;
 	inode_write_handle_t *handle = malloc(sizeof(inode_write_handle_t));
 	log_debug("fs_async_rpc_inode_write: i_ino=%zu index=%zu offset=%ld",
@@ -1074,9 +1121,9 @@ fs_async_rpc_inode_write(uint64_t i_ino, uint64_t index, off_t offset,
 	    .datatype = ucp_dt_make_contig(sizeof(char)),
 	};
 
-	handle->req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_WRITE_REQ,
-				      &handle->header, sizeof(handle->header),
-				      buf, size, &rparam);
+	handle->req = ucp_am_send_nbx(
+	    tlenv.ucp_eps[target], RPC_INODE_WRITE_REQ, &handle->header,
+	    sizeof(handle->header), buf, size, &rparam);
 	if (handle->req && UCS_PTR_IS_ERR(handle->req)) {
 		log_error("fs_rpc_inode_write: ucp_am_send_nbx() failed: %s",
 			  ucs_status_string(UCS_PTR_STATUS(handle->req)));
@@ -1096,7 +1143,7 @@ fs_async_rpc_inode_write_wait(void **hdles, int nreqs)
 		reqs[i] = handles[i]->req;
 	}
 	while (!all_req_finish(reqs, nreqs)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	int nokreq = 0;
 	int *okidx = malloc(sizeof(int) * nreqs);
@@ -1129,7 +1176,7 @@ fs_async_rpc_inode_write_wait(void **hdles, int nreqs)
 		rets[i] = &handles[okidx[i]]->ret;
 	}
 	while (!all_ret_finish(rets, nokreq)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	free(okidx);
 	free(rets);
@@ -1168,6 +1215,8 @@ fs_async_rpc_inode_read(uint64_t i_ino, uint64_t index, off_t offset,
 		log_error("fs_async_rpc_inode_read: size is 0");
 		return (NULL);
 	}
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 
 	int target = (i_ino + index) % env.nprocs;
 	inode_read_handle_t *handle = malloc(sizeof(inode_read_handle_t));
@@ -1192,7 +1241,7 @@ fs_async_rpc_inode_read(uint64_t i_ino, uint64_t index, off_t offset,
 	    .datatype = ucp_dt_make_contig(sizeof(char)),
 	};
 
-	handle->req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_READ_REQ,
+	handle->req = ucp_am_send_nbx(tlenv.ucp_eps[target], RPC_INODE_READ_REQ,
 				      &handle->header, sizeof(handle->header),
 				      buf, 1, &rparam);
 	if (handle->req && UCS_PTR_IS_ERR(handle->req)) {
@@ -1214,7 +1263,7 @@ fs_async_rpc_inode_read_wait(void **hdles, int nreqs, size_t size)
 		reqs[i] = handles[i]->req;
 	}
 	while (!all_req_finish(reqs, nreqs)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	int nokreq = 0;
 	int *okidx = malloc(sizeof(int) * nreqs);
@@ -1246,7 +1295,7 @@ fs_async_rpc_inode_read_wait(void **hdles, int nreqs, size_t size)
 		rets[i] = &handles[okidx[i]]->ret;
 	}
 	while (!all_ret_finish(rets, nokreq)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	free(okidx);
 	free(rets);
@@ -1326,6 +1375,8 @@ int
 fs_rpc_readdir(const char *path, void *arg,
 	       void (*filler)(void *, const char *, const struct stat *))
 {
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 	ucp_dt_iov_t iov[1];
 	iov[0].buffer = (void *)path;
 	iov[0].length = strlen(path) + 1;
@@ -1352,11 +1403,11 @@ fs_rpc_readdir(const char *path, void *arg,
 
 	for (int i = 0; i < env.nprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(
-		    env.ucp_eps[i], RPC_READDIR_REQ, &handles[i].header,
+		    tlenv.ucp_eps[i], RPC_READDIR_REQ, &handles[i].header,
 		    sizeof(handles[i].header), iov, 1, &rparam);
 	}
 	while (!all_req_finish(reqs, env.nprocs)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	int nokreq = 0;
 	int *okidx = malloc(sizeof(int) * env.nprocs);
@@ -1386,7 +1437,7 @@ fs_rpc_readdir(const char *path, void *arg,
 		rets[i] = &handles[okidx[i]].ret;
 	}
 	while (!all_ret_finish(rets, nokreq)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	free(okidx);
 	free(rets);
@@ -1412,6 +1463,8 @@ fs_rpc_readdir(const char *path, void *arg,
 int
 fs_rpc_dir_move(const char *oldpath, const char *newpath)
 {
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 	ucp_dt_iov_t iov[2];
 	iov[0].buffer = (void *)oldpath;
 	iov[0].length = strlen(oldpath) + 1;
@@ -1436,14 +1489,14 @@ fs_rpc_dir_move(const char *oldpath, const char *newpath)
 
 	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nprocs);
 	for (int i = 0; i < env.nprocs; i++) {
-		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_DIR_MOVE_REQ,
+		reqs[i] = ucp_am_send_nbx(tlenv.ucp_eps[i], RPC_DIR_MOVE_REQ,
 					  &rets_addr[i], sizeof(void *), iov, 2,
 					  &rparam);
 	}
 
 	ucs_status_t status;
 	while (!all_req_finish(reqs, env.nprocs)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	int nokreq = 0;
 	int *okidx = malloc(sizeof(int) * env.nprocs);
@@ -1473,7 +1526,7 @@ fs_rpc_dir_move(const char *oldpath, const char *newpath)
 		rets[i] = &ret[okidx[i]];
 	}
 	while (!all_ret_finish(rets, nokreq)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	free(rets);
 	free(rets_addr);
@@ -1502,6 +1555,8 @@ fs_rpc_find(const char *path, const char *query,
 	    struct finchfs_find_param *param, void *arg,
 	    void (*filler)(void *, const char *))
 {
+	if (tlenv.ucp_worker == NULL)
+		fs_tlenv_init();
 	ucp_dt_iov_t iov[3];
 	iov[0].buffer = (void *)path;
 	iov[0].length = strlen(path) + 1;
@@ -1533,11 +1588,11 @@ fs_rpc_find(const char *path, const char *query,
 
 	for (int i = 0; i < env.nprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(
-		    env.ucp_eps[i], RPC_FIND_REQ, &handles[i].header,
+		    tlenv.ucp_eps[i], RPC_FIND_REQ, &handles[i].header,
 		    sizeof(handles[i].header), iov, 3, &rparam);
 	}
 	while (!all_req_finish(reqs, env.nprocs)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	int nokreq = 0;
 	int *okidx = malloc(sizeof(int) * env.nprocs);
@@ -1567,7 +1622,7 @@ fs_rpc_find(const char *path, const char *query,
 		rets[i] = &handles[okidx[i]].ret;
 	}
 	while (!all_ret_finish(rets, nokreq)) {
-		ucp_worker_progress(env.ucp_worker);
+		ucp_worker_progress(tlenv.ucp_worker);
 	}
 	free(okidx);
 	free(rets);
