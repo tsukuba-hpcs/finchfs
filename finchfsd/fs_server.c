@@ -1297,11 +1297,28 @@ fs_server_term(int trank)
 	return (0);
 }
 
+uint64_t
+get_tsc()
+{
+	unsigned long long cycles_low, cycles_high;
+	asm volatile("RDTSCP\n\t"
+		     "mov %%rdx, %0\n\t"
+		     "mov %%rax, %1\n\t"
+		     "LFENCE\n\t"
+		     : "=r"(cycles_high), "=r"(cycles_low)::"%rax", "%rcx",
+		       "%rdx");
+	return ((uint64_t)cycles_high << 32) | cycles_low;
+}
+
 void *
 fs_server_progress()
 {
+	unsigned count;
 	while (*ctx.shutdown == 0) {
-		ucp_worker_progress(ctx.ucp_worker);
+		count = ucp_worker_progress(ctx.ucp_worker);
+		if (count) {
+			log_info("%llu %u\n", get_tsc(), count);
+		}
 	}
 	return (NULL);
 }
