@@ -1323,7 +1323,7 @@ fs_server_progress()
 	tsc_buf[idx] = get_tsc();
 	cnt_buf[idx] = 0;
 	idx++;
-	snprintf(name, sizeof(name), "%d", ctx.rank);
+	snprintf(name, sizeof(name), "finchfsd.log.%d", ctx.rank);
 	while (*ctx.shutdown == 0) {
 		count = ucp_worker_progress(ctx.ucp_worker);
 		if (count && idx < BUF_SIZE) {
