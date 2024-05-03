@@ -1316,7 +1316,7 @@ fs_server_progress()
 	unsigned count;
 	FILE *fp;
 	char name[256];
-	const int BUF_SIZE = 1024 * 1024 * 8;
+	const int BUF_SIZE = 100000;
 	uint64_t *tsc_buf = (uint64_t *)malloc(sizeof(uint64_t) * BUF_SIZE);
 	unsigned *cnt_buf = (unsigned *)malloc(sizeof(unsigned) * BUF_SIZE);
 	uint64_t idx = 0;
@@ -1324,6 +1324,7 @@ fs_server_progress()
 	cnt_buf[idx] = 0;
 	idx++;
 	snprintf(name, sizeof(name), "finchfsd.log.%d", ctx.rank);
+	fp = fopen(name, "w");
 	while (*ctx.shutdown == 0) {
 		count = ucp_worker_progress(ctx.ucp_worker);
 		if (count && idx < BUF_SIZE) {
@@ -1331,13 +1332,13 @@ fs_server_progress()
 			cnt_buf[idx] = count;
 			idx++;
 		}
-	}
-	fp = fopen(name, "w");
-	if (fp != NULL) {
-		for (uint64_t i = 0; i < idx; i++) {
-			fprintf(fp, "%lu,%u\n", tsc_buf[i], cnt_buf[i]);
+		if (fp != NULL && idx == BUF_SIZE) {
+			for (uint64_t i = 0; i < idx; i++) {
+				fprintf(fp, "%lu,%u\n", tsc_buf[i], cnt_buf[i]);
+			}
+			fclose(fp);
+			idx++;
 		}
-		fclose(fp);
 	}
 	free(tsc_buf);
 	free(cnt_buf);
