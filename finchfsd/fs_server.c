@@ -1314,11 +1314,22 @@ void *
 fs_server_progress()
 {
 	unsigned count;
+	const int BUF_SIZE = 1024 * 1024 * 8;
+	uint64_t *tsc_buf = (uint64_t *)malloc(sizeof(uint64_t) * BUF_SIZE);
+	unsigned *cnt_buf = (unsigned *)malloc(sizeof(unsigned) * BUF_SIZE);
+	uint64_t idx = 0;
 	while (*ctx.shutdown == 0) {
 		count = ucp_worker_progress(ctx.ucp_worker);
-		if (count) {
-			log_info("%llu %u\n", get_tsc(), count);
+		if (count && idx < BUF_SIZE) {
+			tsc_buf[idx] = get_tsc();
+			cnt_buf[idx] = count;
+			idx++;
 		}
 	}
+	for (uint64_t i = 0; i < idx; i++) {
+		fprintf(stderr, "%lu,%u\n", tsc_buf[i], cnt_buf[i]);
+	}
+	free(tsc_buf);
+	free(cnt_buf);
 	return (NULL);
 }
