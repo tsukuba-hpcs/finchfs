@@ -1297,50 +1297,11 @@ fs_server_term(int trank)
 	return (0);
 }
 
-uint64_t
-get_tsc()
-{
-	unsigned long long cycles_low, cycles_high;
-	asm volatile("RDTSCP\n\t"
-		     "mov %%rdx, %0\n\t"
-		     "mov %%rax, %1\n\t"
-		     "LFENCE\n\t"
-		     : "=r"(cycles_high), "=r"(cycles_low)::"%rax", "%rcx",
-		       "%rdx");
-	return ((uint64_t)cycles_high << 32) | cycles_low;
-}
-
 void *
 fs_server_progress()
 {
-	unsigned count;
-	FILE *fp;
-	char name[256];
-	const int BUF_SIZE = 200000;
-	uint64_t *tsc_buf = (uint64_t *)malloc(sizeof(uint64_t) * BUF_SIZE);
-	unsigned *cnt_buf = (unsigned *)malloc(sizeof(unsigned) * BUF_SIZE);
-	uint64_t idx = 0;
-	uint64_t base = get_tsc();
-	snprintf(name, sizeof(name), "finchfsd.log.%d", ctx.rank);
-	fp = fopen(name, "w");
 	while (*ctx.shutdown == 0) {
-		count = ucp_worker_progress(ctx.ucp_worker);
-		if (count && idx < BUF_SIZE) {
-			tsc_buf[idx] = get_tsc() - base;
-			cnt_buf[idx] = count;
-		}
-		if (count) {
-			idx++;
-		}
-		if (fp != NULL && idx == BUF_SIZE * 2) {
-			for (uint64_t i = 0; i < BUF_SIZE; i++) {
-				fprintf(fp, "%lu,%u\n", tsc_buf[i], cnt_buf[i]);
-			}
-			fclose(fp);
-			idx++;
-		}
+		ucp_worker_progress(ctx.ucp_worker);
 	}
-	free(tsc_buf);
-	free(cnt_buf);
 	return (NULL);
 }
