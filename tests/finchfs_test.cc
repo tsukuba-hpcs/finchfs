@@ -773,6 +773,30 @@ TEST(FinchfsTest, CloseAfterUnlink)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Access_Perm_Read)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/perm1", O_WRONLY, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	char buf[1024];
+	EXPECT_EQ(finchfs_read(fd, buf, 1024), -1);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Access_Perm_Write)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/perm2", O_RDONLY, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	char buf[1024];
+	EXPECT_EQ(finchfs_write(fd, buf, 1024), -1);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {
