@@ -677,21 +677,23 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 }
 
 int
-fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
+fs_rpc_inode_create(const char *path, uint8_t access, mode_t mode, size_t chunk_size,
 		    uint64_t *i_ino, size_t *size, uint64_t *eid)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
-	ucp_dt_iov_t iov[5];
+	ucp_dt_iov_t iov[6];
 	iov[0].buffer = (void *)path;
 	iov[0].length = strlen(path) + 1;
-	iov[1].buffer = &mode;
-	iov[1].length = sizeof(mode);
-	iov[2].buffer = &chunk_size;
-	iov[2].length = sizeof(chunk_size);
-	iov[3].buffer = i_ino;
-	iov[3].length = sizeof(*i_ino);
-	iov[4].buffer = size;
-	iov[4].length = sizeof(*size);
+	iov[1].buffer = &access;
+	iov[1].length = sizeof(access);
+	iov[2].buffer = &mode;
+	iov[2].length = sizeof(mode);
+	iov[3].buffer = &chunk_size;
+	iov[3].length = sizeof(chunk_size);
+	iov[4].buffer = i_ino;
+	iov[4].length = sizeof(*i_ino);
+	iov[5].buffer = size;
+	iov[5].length = sizeof(*size);
 
 	inode_create_handle_t handle;
 	handle.ret = FINCH_INPROGRESS;
@@ -710,7 +712,7 @@ fs_rpc_inode_create(const char *path, mode_t mode, size_t chunk_size,
 	ucs_status_ptr_t req;
 	req =
 	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_CREATE_REQ,
-			    &handle_addr, sizeof(handle_addr), iov, 5, &rparam);
+			    &handle_addr, sizeof(handle_addr), iov, 6, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
@@ -1007,10 +1009,10 @@ fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size)
 }
 
 int
-fs_rpc_inode_close(const char *path, uint64_t eid, size_t size)
+fs_rpc_inode_close(const char *path, uint64_t eid, uint8_t access, size_t size)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
-	size_t ssize = (size << 1) + 1;
+	size_t ssize = (size << 3) + (access << 1) + 1;
 	ucp_dt_iov_t iov[2];
 	iov[0].buffer = &eid;
 	iov[0].length = sizeof(eid);

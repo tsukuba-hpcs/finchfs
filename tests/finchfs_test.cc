@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <ucp/api/ucp.h>
 #include <gtest/gtest.h>
+#include <fcntl.h>
 extern "C" {
 #include <finchfs.h>
 }
@@ -10,7 +11,7 @@ TEST(FinchfsTest, Create)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create("/bar", 0, S_IRWXU);
+	fd = finchfs_create("/bar", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_term(), 0);
@@ -20,7 +21,7 @@ TEST(FinchfsTest, Create2)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create("/baz", 0, S_IRWXU);
+	fd = finchfs_create("/baz", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_term(), 0);
@@ -30,7 +31,7 @@ TEST(FinchfsTest, Open)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_open("/bar", 0);
+	fd = finchfs_open("/bar", O_RDWR);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_term(), 0);
@@ -40,7 +41,7 @@ TEST(FinchfsTest, Open2)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_open("/baz", 0);
+	fd = finchfs_open("/baz", O_RDWR);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_term(), 0);
@@ -50,9 +51,9 @@ TEST(FinchfsTest, Open3)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd1, fd2;
-	fd1 = finchfs_open("/bar", 0);
+	fd1 = finchfs_open("/bar", O_RDWR);
 	EXPECT_EQ(fd1, 0);
-	fd2 = finchfs_open("/baz", 0);
+	fd2 = finchfs_open("/baz", O_RDWR);
 	EXPECT_EQ(fd2, 1);
 	finchfs_close(fd1);
 	finchfs_close(fd2);
@@ -63,10 +64,10 @@ TEST(FinchfsTest, Open4)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd1, fd2;
-	fd1 = finchfs_open("/bar", 0);
+	fd1 = finchfs_open("/bar", O_RDWR);
 	EXPECT_EQ(fd1, 0);
 	finchfs_close(fd1);
-	fd2 = finchfs_open("/baz", 0);
+	fd2 = finchfs_open("/baz", O_RDWR);
 	EXPECT_EQ(fd2, 0);
 	finchfs_close(fd2);
 	EXPECT_EQ(finchfs_term(), 0);
@@ -76,7 +77,7 @@ TEST(FinchfsTest, Write)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create("/write1", 0, S_IRWXU);
+	fd = finchfs_create("/write1", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	char buf[1024];
 	ssize_t n;
@@ -90,7 +91,7 @@ TEST(FinchfsTest, Write2)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create_chunk_size("/write2", 0, S_IRWXU, 128);
+	fd = finchfs_create_chunk_size("/write2", O_RDWR, S_IRWXU, 128);
 	EXPECT_EQ(fd, 0);
 	char buf[1024];
 	ssize_t n;
@@ -104,7 +105,7 @@ TEST(FinchfsTest, Write3)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create_chunk_size("/write3", 0, S_IRWXU, 128);
+	fd = finchfs_create_chunk_size("/write3", O_RDWR, S_IRWXU, 128);
 	EXPECT_EQ(fd, 0);
 	char buf[777];
 	ssize_t n;
@@ -118,7 +119,7 @@ TEST(FinchfsTest, Write4)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create_chunk_size("/write4", 0, S_IRWXU, 128);
+	fd = finchfs_create_chunk_size("/write4", O_RDWR, S_IRWXU, 128);
 	EXPECT_EQ(fd, 0);
 	char buf[100];
 	ssize_t n;
@@ -134,7 +135,7 @@ TEST(FinchfsTest, Write5)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create_chunk_size("/write5", 0, S_IRWXU, (1 << 24));
+	fd = finchfs_create_chunk_size("/write5", O_RDWR, S_IRWXU, (1 << 24));
 	EXPECT_EQ(fd, 0);
 	char *buf = (char *)malloc((1 << 24));
 	ssize_t n;
@@ -157,7 +158,7 @@ TEST(FinchfsTest, Read)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create("/read1", 0, S_IRWXU);
+	fd = finchfs_create("/read1", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	char buf[1024], buf2[1024];
 	rnd_fill(buf, sizeof(buf));
@@ -165,7 +166,7 @@ TEST(FinchfsTest, Read)
 	n = finchfs_write(fd, buf, sizeof(buf));
 	EXPECT_EQ(n, sizeof(buf));
 	finchfs_close(fd);
-	fd = finchfs_open("/read1", 0);
+	fd = finchfs_open("/read1", O_RDWR);
 	EXPECT_EQ(fd, 0);
 	n = finchfs_read(fd, buf2, sizeof(buf2));
 	EXPECT_EQ(n, sizeof(buf2));
@@ -178,7 +179,7 @@ TEST(FinchfsTest, Read2)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create_chunk_size("/read2", 0, S_IRWXU, (1 << 24));
+	fd = finchfs_create_chunk_size("/read2", O_RDWR, S_IRWXU, (1 << 24));
 	EXPECT_EQ(fd, 0);
 	char *buf;
 	char *buf2;
@@ -189,7 +190,7 @@ TEST(FinchfsTest, Read2)
 	n = finchfs_write(fd, buf, (1 << 24));
 	EXPECT_EQ(n, 1 << 24);
 	finchfs_close(fd);
-	fd = finchfs_open("/read2", 0);
+	fd = finchfs_open("/read2", O_RDWR);
 	EXPECT_EQ(fd, 0);
 	n = finchfs_read(fd, buf2, (1 << 24));
 	EXPECT_EQ(n, (1 << 24));
@@ -202,7 +203,7 @@ TEST(FinchfsTest, Read3)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create_chunk_size("/read3", 0, S_IRWXU, 128);
+	fd = finchfs_create_chunk_size("/read3", O_RDWR, S_IRWXU, 128);
 	EXPECT_EQ(fd, 0);
 	char buf[1024];
 	char buf2[1024];
@@ -211,7 +212,7 @@ TEST(FinchfsTest, Read3)
 	n = finchfs_write(fd, buf, sizeof(buf));
 	EXPECT_EQ(n, sizeof(buf));
 	finchfs_close(fd);
-	fd = finchfs_open("/read3", 0);
+	fd = finchfs_open("/read3", O_RDWR);
 	EXPECT_EQ(fd, 0);
 	for (int i = 0; i < 8; i++) {
 		n = finchfs_read(fd, buf2, 100);
@@ -226,7 +227,7 @@ TEST(FinchfsTest, Unlink)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create("/unlink1", 0, S_IRWXU);
+	fd = finchfs_create("/unlink1", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_unlink("/unlink1"), 0);
@@ -263,11 +264,11 @@ TEST(FinchfsTest, Rmdir)
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	EXPECT_EQ(finchfs_mkdir("/rmdir1", S_IRWXU), 0);
 	int fd;
-	fd = finchfs_create("/rmdir1/file1", 0, S_IRWXU);
+	fd = finchfs_create("/rmdir1/file1", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_rmdir("/rmdir1"), 0);
-	fd = finchfs_open("/rmdir1/file1", 0);
+	fd = finchfs_open("/rmdir1/file1", O_RDWR);
 	EXPECT_EQ(fd, -1);
 	EXPECT_EQ(finchfs_term(), 0);
 }
@@ -278,14 +279,14 @@ TEST(FinchfsTest, Rename)
 	int fd;
 	char buf[128];
 	rnd_fill(buf, sizeof(buf));
-	fd = finchfs_create("/rename1_before", 0, S_IRWXU);
+	fd = finchfs_create("/rename1_before", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	ssize_t n;
 	n = finchfs_write(fd, buf, sizeof(buf));
 	EXPECT_EQ(n, sizeof(buf));
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_rename("/rename1_before", "/rename1_after"), 0);
-	fd = finchfs_open("/rename1_after", 0);
+	fd = finchfs_open("/rename1_after", O_RDWR);
 	EXPECT_EQ(fd, 0);
 	char buf2[128];
 	n = finchfs_read(fd, buf2, sizeof(buf2));
@@ -301,11 +302,11 @@ TEST(FinchfsTest, RenameDir)
 	EXPECT_EQ(finchfs_mkdir("/XXX", S_IRWXU), 0);
 	EXPECT_EQ(finchfs_mkdir("/XXX/YYY", S_IRWXU), 0);
 	int fd;
-	fd = finchfs_create("/XXX/YYY/file1", 0, S_IRWXU);
+	fd = finchfs_create("/XXX/YYY/file1", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_rename("/XXX/YYY", "/XXX/ZZZ"), 0);
-	fd = finchfs_open("/XXX/ZZZ/file1", 0);
+	fd = finchfs_open("/XXX/ZZZ/file1", O_RDWR);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_rmdir("/XXX/ZZZ"), 0);
@@ -318,7 +319,7 @@ TEST(FinchfsTest, Stat)
 	int fd;
 	char buf[128];
 	rnd_fill(buf, sizeof(buf));
-	fd = finchfs_create("/stat1", 0, S_IRWXU);
+	fd = finchfs_create("/stat1", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	ssize_t n;
 	n = finchfs_write(fd, buf, sizeof(buf));
@@ -336,7 +337,7 @@ TEST(FinchfsTest, Stat2)
 	int fd;
 	char buf[1000];
 	rnd_fill(buf, sizeof(buf));
-	fd = finchfs_create_chunk_size("/stat2", 0, S_IRWXU, 128);
+	fd = finchfs_create_chunk_size("/stat2", O_RDWR, S_IRWXU, 128);
 	EXPECT_EQ(fd, 0);
 	ssize_t n;
 	n = finchfs_write(fd, buf, sizeof(buf));
@@ -355,9 +356,9 @@ TEST(FinchfsTest, SingleSharedFile)
 	char buf1[1000];
 	int fd2;
 	char buf2[1000];
-	fd1 = finchfs_create("/single_shared", 0, S_IRWXU);
+	fd1 = finchfs_create("/single_shared", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd1, 0);
-	fd2 = finchfs_create("/single_shared", 0, S_IRWXU);
+	fd2 = finchfs_create("/single_shared", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd2, 1);
 	ssize_t n;
 	rnd_fill(buf1, sizeof(buf1));
@@ -384,7 +385,7 @@ TEST(FinchfsTest, Readdir)
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	EXPECT_EQ(finchfs_mkdir("/readdir1", S_IRWXU), 0);
 	int fd;
-	fd = finchfs_create("/readdir1/file1", 0, S_IRWXU);
+	fd = finchfs_create("/readdir1/file1", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
 	int filler1_called = 0;
@@ -427,7 +428,7 @@ TEST(FinchfsTest, Readdir3)
 		char path[128];
 		sprintf(path, "/readdir3/%d", i);
 		int fd;
-		fd = finchfs_create(path, 0, S_IRWXU);
+		fd = finchfs_create(path, O_RDWR, S_IRWXU);
 		EXPECT_EQ(fd, 0);
 		finchfs_close(fd);
 	}
@@ -452,7 +453,7 @@ TEST(FinchfsTest, FIND)
 		char path[128];
 		sprintf(path, "/find/%d", i);
 		int fd;
-		fd = finchfs_create(path, 0, S_IRWXU);
+		fd = finchfs_create(path, O_RDWR, S_IRWXU);
 		EXPECT_EQ(fd, 0);
 		finchfs_close(fd);
 	}
@@ -477,7 +478,7 @@ TEST(FinchfsTest, FIND2)
 		char path[128];
 		sprintf(path, "/find2/%d", i);
 		int fd;
-		fd = finchfs_create(path, 0, S_IRWXU);
+		fd = finchfs_create(path, O_RDWR, S_IRWXU);
 		EXPECT_EQ(fd, 0);
 		finchfs_close(fd);
 	}
@@ -502,7 +503,7 @@ TEST(FinchfsTest, FIND3)
 		char path[128];
 		sprintf(path, "/find3/%d", i);
 		int fd;
-		fd = finchfs_create(path, 0, S_IRWXU);
+		fd = finchfs_create(path, O_RDWR, S_IRWXU);
 		EXPECT_EQ(fd, 0);
 		finchfs_close(fd);
 	}
@@ -526,7 +527,7 @@ TEST(FinchfsTest, FIND4)
 		char path[128];
 		sprintf(path, "/find4/%d", i);
 		int fd;
-		fd = finchfs_create(path, 0, S_IRWXU);
+		fd = finchfs_create(path, O_RDWR, S_IRWXU);
 		EXPECT_EQ(fd, 0);
 		EXPECT_EQ(finchfs_write(fd, buf, i + 1), i + 1);
 		finchfs_close(fd);
@@ -554,7 +555,7 @@ TEST(FinchfsTest, FIND5)
 	for (int i = 0; i < 10000; i++) {
 		sprintf(buf, "/find5/%d/%d", i % 100, i);
 		int fd;
-		fd = finchfs_create(buf, 0, S_IRWXU);
+		fd = finchfs_create(buf, O_RDWR, S_IRWXU);
 		EXPECT_EQ(fd, 0);
 		finchfs_close(fd);
 	}
@@ -580,7 +581,7 @@ TEST(FinchfsTest, FIND6)
 	for (int i = 0; i < 10000; i++) {
 		sprintf(buf, "/find6/%d/%d", i % 100, i);
 		int fd;
-		fd = finchfs_create(buf, 0, S_IRWXU);
+		fd = finchfs_create(buf, O_RDWR, S_IRWXU);
 		EXPECT_EQ(fd, 0);
 		finchfs_close(fd);
 	}
@@ -598,7 +599,7 @@ TEST(FinchfsTest, Sparse)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create_chunk_size("/sparse", 0, S_IRWXU, 1);
+	fd = finchfs_create_chunk_size("/sparse", O_RDWR, S_IRWXU, 1);
 	EXPECT_EQ(fd, 0);
 	char a = 'a';
 	char c = 'c';
@@ -620,7 +621,7 @@ TEST(FinchfsTest, Sparse2)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd1, fd2;
-	fd1 = finchfs_create_chunk_size("/sparse2", 0, S_IRWXU, 1);
+	fd1 = finchfs_create_chunk_size("/sparse2", O_RDWR, S_IRWXU, 1);
 	EXPECT_EQ(fd1, 0);
 	fd2 = finchfs_open("/sparse2", 0);
 	EXPECT_EQ(fd2, 1);
@@ -645,7 +646,7 @@ TEST(FinchfsTest, Sparse3)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd1, fd2;
-	fd1 = finchfs_create_chunk_size("/sparse3", 0, S_IRWXU, 1);
+	fd1 = finchfs_create_chunk_size("/sparse3", O_RDWR, S_IRWXU, 1);
 	EXPECT_EQ(fd1, 0);
 	fd2 = finchfs_open("/sparse3", 0);
 	EXPECT_EQ(fd2, 1);
@@ -667,7 +668,7 @@ TEST(FinchfsTest, Sparse4)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create_chunk_size("/sparse4", 0, S_IRWXU, 2);
+	fd = finchfs_create_chunk_size("/sparse4", O_RDWR, S_IRWXU, 2);
 	EXPECT_EQ(fd, 0);
 	char a = 'a';
 	char c = 'c';
@@ -689,9 +690,9 @@ TEST(FinchfsTest, Sparse5)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd1, fd2;
-	fd1 = finchfs_create_chunk_size("/sparse5", 0, S_IRWXU, 2);
+	fd1 = finchfs_create_chunk_size("/sparse5", O_RDWR, S_IRWXU, 2);
 	EXPECT_EQ(fd1, 0);
-	fd2 = finchfs_open("/sparse5", 0);
+	fd2 = finchfs_open("/sparse5", O_RDWR);
 	EXPECT_EQ(fd2, 1);
 	char a = 'a';
 	char c = 'c';
@@ -714,7 +715,7 @@ TEST(FinchfsTest, Seek)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create("/seek", 0, S_IRWXU);
+	fd = finchfs_create("/seek", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	char buf[128];
 	rnd_fill(buf, sizeof(buf));
@@ -731,7 +732,7 @@ TEST(FinchfsTest, Seek2)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create("/seek2", 0, S_IRWXU);
+	fd = finchfs_create("/seek2", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	char buf[128];
 	rnd_fill(buf, sizeof(buf));
@@ -748,7 +749,7 @@ TEST(FinchfsTest, Seek3)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create("/seek3", 0, S_IRWXU);
+	fd = finchfs_create("/seek3", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	char buf[128];
 	rnd_fill(buf, sizeof(buf));
@@ -765,7 +766,7 @@ TEST(FinchfsTest, CloseAfterUnlink)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
-	fd = finchfs_create("/close_after_unlink", 0, S_IRWXU);
+	fd = finchfs_create("/close_after_unlink", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	EXPECT_EQ(finchfs_unlink("/close_after_unlink"), 0);
 	EXPECT_EQ(finchfs_close(fd), 0);

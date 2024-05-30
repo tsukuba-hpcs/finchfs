@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
+#include <fcntl.h>
 #include "finchfs.h"
 #include "fs_types.h"
 #include "fs_rpc.h"
@@ -24,6 +25,7 @@ struct entry {
 	struct timespec ctime;
 	size_t size;
 	uint32_t ref_count;
+	uint32_t ref_w_count;
 	RB_ENTRY(entry) link;
 	struct entrytree entries;
 };
@@ -300,6 +302,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			 const ucp_am_recv_param_t *param)
 {
 	char *path;
+	uint8_t access;
 	mode_t mode;
 	size_t chunk_size;
 	uint64_t i_ino;
@@ -307,6 +310,8 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	char *p = (char *)data;
 	path = (char *)p;
 	p += strlen(path) + 1;
+	access = *(uint8_t *)p;
+	p += sizeof(access);
 	mode = *(mode_t *)p;
 	p += sizeof(mode);
 	chunk_size = *(size_t *)p;
@@ -364,6 +369,9 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 				free(newent->name);
 				free(newent);
 				ent->ref_count++;
+				if ((access & O_RDWR) || (access & O_WRONLY)) {
+					newent->ref_w_count++;
+				}
 				*(uint64_t *)(user_data->iov[1].buffer) =
 				    ent->i_ino;
 				*(void **)(user_data->iov[2].buffer) = ent;
@@ -384,6 +392,11 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			timespec_get(&newent->mtime, TIME_UTC);
 			timespec_get(&newent->ctime, TIME_UTC);
 			newent->ref_count = 1;
+			if ((access & O_RDWR) || (access & O_WRONLY)) {
+				newent->ref_w_count = 1;
+			} else {
+				newent->ref_w_count = 0;
+			}
 			*(uint64_t *)(user_data->iov[1].buffer) = newent->i_ino;
 			*(void **)(user_data->iov[2].buffer) = newent;
 		}
@@ -505,6 +518,10 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 			if (open) {
 				ent->ref_count++;
 			}
+			if (((open >> 1) & O_RDWR) ||
+			    ((open >> 1) & O_WRONLY)) {
+				ent->ref_w_count++;
+			}
 		}
 	}
 
@@ -527,21 +544,24 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 	ssize = *(size_t *)p;
 
 	log_debug("fs_rpc_inode_stat_update_recv() called eid=%p size=%zu", eid,
-		  ssize >> 1);
+		  ssize >> 3);
 
 	if (ssize & 1) {
 		eid->ref_count--;
+		if (((ssize >> 1) & O_RDWR) || ((ssize >> 1) & O_WRONLY)) {
+			eid->ref_w_count--;
+		}
 		if (eid->ref_count == 0 && eid->name == NULL) {
 			free(eid);
 		} else {
-			if (eid->size < (ssize >> 1)) {
-				eid->size = ssize >> 1;
+			if (eid->size < (ssize >> 3)) {
+				eid->size = ssize >> 3;
 			}
 			timespec_get(&eid->mtime, TIME_UTC);
 		}
 	} else {
-		if (eid->size < (ssize >> 1)) {
-			eid->size = ssize >> 1;
+		if (eid->size < (ssize >> 3)) {
+			eid->size = ssize >> 3;
 		}
 		timespec_get(&eid->mtime, TIME_UTC);
 
