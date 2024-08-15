@@ -39,5 +39,8 @@ client/.deps
 client/.libs
 client/finchfind
 client/*.o
+client/*.lo
+client/*.la
+client/finchrun
 client/finchmkdir
 docs/_build

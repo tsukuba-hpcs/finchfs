@@ -1,0 +1,3 @@
+#!/bin/bash
+
+LIBZPHOOK=@prefix@/lib/libfinchrun.so LD_LIBRARY_PATH=@prefix@/lib:$LD_LIBRARY_PATH LD_PRELOAD=@prefix@/lib/libzpoline.so "$@"

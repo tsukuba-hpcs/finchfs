@@ -50,5 +50,5 @@ AC_CHECK_FUNCS([fcntl.h stdlib.h string.h syslog.h unistd.h])
 
 AC_DEFINE([DUMP_ADDR_FILE], ["/tmp/finchfsd"], [File path to dump address to])
 
-AC_CONFIG_FILES([Makefile lib/Makefile finchfsd/Makefile pkgconfig/finchfs.pc pkgconfig/Makefile client/Makefile])
+AC_CONFIG_FILES([Makefile lib/Makefile finchfsd/Makefile pkgconfig/finchfs.pc pkgconfig/Makefile client/Makefile client/finchrun])
 AC_OUTPUT
