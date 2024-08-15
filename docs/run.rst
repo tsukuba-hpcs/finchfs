@@ -20,7 +20,7 @@ An example of a script is the following.
     FINCHFSD_PPN=8
     FINCH_DB_SIZE=$((1024 * 1024 * 1024 * 1024)) # 1 TiB
     export UCX_NUM_EPS=$NUM_CLIENTS
-    mpirun -np $((NUM_NODES*FINCHFSD_PPN)) -hostfile /path/to/hostfile --map-by ppr:$FINCHFSD_PPN:node:PE=1 -x UCX_NUM_EPS finchfsd -c /scr -s $FINCH_DB_SIZE -v debug &
+    mpirun -np $((NUM_NODES*FINCHFSD_PPN)) -hostfile /path/to/hostfile --map-by ppr:$FINCHFSD_PPN:node:PE=1 -x UCX_NUM_EPS finchfsd -d /scr -s $FINCH_DB_SIZE -v debug &
     sleep 5 # wait for finchfsd to start
 
 When we use pmemkv backend with devdax mode, 
