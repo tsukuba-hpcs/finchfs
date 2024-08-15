@@ -1,0 +1,3 @@
+[submodule "client/zpoline"]
+	path = client/zpoline
+	url = https://github.com/yasukata/zpoline
