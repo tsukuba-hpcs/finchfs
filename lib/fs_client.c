@@ -953,7 +953,7 @@ int
 fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
-	size_t ssize = (*size) << 1;
+	size_t ssize = (*size) << 3;
 	ucp_dt_iov_t iov[2];
 	iov[0].buffer = &eid;
 	iov[0].length = sizeof(eid);
