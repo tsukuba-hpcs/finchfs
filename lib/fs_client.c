@@ -677,8 +677,9 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 }
 
 int
-fs_rpc_inode_create(const char *path, uint8_t access, mode_t mode, size_t chunk_size,
-		    uint64_t *i_ino, size_t *size, uint64_t *eid)
+fs_rpc_inode_create(const char *path, uint8_t access, mode_t mode,
+		    size_t chunk_size, uint64_t *i_ino, size_t *size,
+		    uint64_t *eid)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
 	ucp_dt_iov_t iov[6];

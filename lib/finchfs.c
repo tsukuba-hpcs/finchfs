@@ -469,6 +469,33 @@ finchfs_stat(const char *path, struct stat *st)
 }
 
 int
+finchfs_fstat(int fd, struct stat *st)
+{
+	log_debug("finchfs_fstat() called fd=%d", fd);
+	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	fs_stat_t fst;
+	int ret;
+	ret = fs_rpc_inode_stat(fd_table[fd].path, &fst, 0);
+	if (ret) {
+		return (-1);
+	}
+	st->st_mode = fst.mode;
+	st->st_uid = getuid();
+	st->st_gid = getgid();
+	st->st_size = fst.size;
+	st->st_mtim = fst.mtime;
+	st->st_ctim = fst.ctime;
+	st->st_nlink = 1;
+	st->st_ino = fst.i_ino;
+	st->st_blksize = fst.chunk_size;
+	st->st_blocks = NUM_BLOCKS(fst.size);
+	return (0);
+}
+
+int
 finchfs_readdir(const char *path, void *buf,
 		void (*filler)(void *, const char *, const struct stat *))
 {

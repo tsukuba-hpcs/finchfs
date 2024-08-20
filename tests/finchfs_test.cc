@@ -349,6 +349,25 @@ TEST(FinchfsTest, Stat2)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Fstat)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	char buf[128];
+	rnd_fill(buf, sizeof(buf));
+	fd = finchfs_create("/fstat1", O_RDWR, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	EXPECT_EQ(finchfs_fsync(fd), 0);
+	struct stat st;
+	EXPECT_EQ(finchfs_fstat(fd, &st), 0);
+	EXPECT_EQ(st.st_size, sizeof(buf));
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 TEST(FinchfsTest, SingleSharedFile)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
