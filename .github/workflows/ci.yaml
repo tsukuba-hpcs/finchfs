@@ -15,11 +15,14 @@ jobs:
     steps:
     - name: Check out repository
       uses: actions/checkout@v3
+    
+    - name: Init submodule
+      run: git submodule update --init
 
     - name: Set up dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y autoconf automake libtool make gcc g++ libopenmpi-dev libucx-dev libgtest-dev
+        sudo apt-get install -y autoconf automake libtool make gcc g++ libopenmpi-dev libucx-dev libgtest-dev binutils-dev
 
     - name: Run autoreconf
       run: autoreconf -i
