@@ -18,7 +18,7 @@
 #define RPC_FIND_REP 0x12
 
 int fs_rpc_mkdir(const char *path, mode_t mode);
-int fs_rpc_inode_create(const char *path, uint8_t access, mode_t mode,
+int fs_rpc_inode_create(const char *path, uint8_t flags, mode_t mode,
 			size_t chunk_size, uint64_t *i_ino, size_t *size,
 			uint64_t *eid);
 int fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open);

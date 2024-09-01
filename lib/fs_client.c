@@ -677,7 +677,7 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 }
 
 int
-fs_rpc_inode_create(const char *path, uint8_t access, mode_t mode,
+fs_rpc_inode_create(const char *path, uint8_t flags, mode_t mode,
 		    size_t chunk_size, uint64_t *i_ino, size_t *size,
 		    uint64_t *eid)
 {
@@ -685,8 +685,8 @@ fs_rpc_inode_create(const char *path, uint8_t access, mode_t mode,
 	ucp_dt_iov_t iov[6];
 	iov[0].buffer = (void *)path;
 	iov[0].length = strlen(path) + 1;
-	iov[1].buffer = &access;
-	iov[1].length = sizeof(access);
+	iov[1].buffer = &flags;
+	iov[1].length = sizeof(flags);
 	iov[2].buffer = &mode;
 	iov[2].length = sizeof(mode);
 	iov[3].buffer = &chunk_size;

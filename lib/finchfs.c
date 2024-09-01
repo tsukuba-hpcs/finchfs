@@ -110,9 +110,9 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 	fd_table[fd].eid = 0;
 
 	mode |= S_IFREG;
-	ret = fs_rpc_inode_create(p, flags & 0b11, mode, chunk_size,
-				  &fd_table[fd].i_ino, &fd_table[fd].size,
-				  &fd_table[fd].eid);
+	ret = fs_rpc_inode_create(
+	    p, flags & 0b11 + ((flags & O_TRUNC) != 0) << 2, mode, chunk_size,
+	    &fd_table[fd].i_ino, &fd_table[fd].size, &fd_table[fd].eid);
 	if (ret) {
 		free(fd_table[fd].path);
 		fd_table[fd].path = NULL;
@@ -141,7 +141,9 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].access = flags & 0b11;
 	fd_table[fd].pos = 0;
 	fs_stat_t st;
-	ret = fs_rpc_inode_stat(p, &st, (fd_table[fd].access << 1) + 1);
+	ret = fs_rpc_inode_stat(p, &st,
+				(((flags & O_TRUNC) != 0) << 3) +
+				    (fd_table[fd].access << 1) + 1);
 	if (ret) {
 		free(fd_table[fd].path);
 		fd_table[fd].path = NULL;

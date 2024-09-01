@@ -223,6 +223,46 @@ TEST(FinchfsTest, Read3)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Create_O_TRUNC)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/trunc1", O_RDWR, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	char buf[1024];
+	rnd_fill(buf, sizeof(buf));
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	finchfs_close(fd);
+	fd = finchfs_create("/trunc1", O_TRUNC | O_RDWR, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	n = finchfs_read(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Open_O_TRUNC)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/trunc2", O_RDWR, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	char buf[1024];
+	rnd_fill(buf, sizeof(buf));
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	finchfs_close(fd);
+	fd = finchfs_open("/trunc2", O_TRUNC | O_RDWR);
+	EXPECT_EQ(fd, 0);
+	n = finchfs_read(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 TEST(FinchfsTest, Unlink)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);

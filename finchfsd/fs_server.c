@@ -302,7 +302,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			 const ucp_am_recv_param_t *param)
 {
 	char *path;
-	uint8_t access;
+	uint8_t flags;
 	mode_t mode;
 	size_t chunk_size;
 	uint64_t i_ino;
@@ -310,8 +310,8 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	char *p = (char *)data;
 	path = (char *)p;
 	p += strlen(path) + 1;
-	access = *(uint8_t *)p;
-	p += sizeof(access);
+	flags = *(uint8_t *)p;
+	p += sizeof(flags);
 	mode = *(mode_t *)p;
 	p += sizeof(mode);
 	chunk_size = *(size_t *)p;
@@ -368,9 +368,16 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			} else {
 				free(newent->name);
 				free(newent);
+				if (((flags >> 2) & 1) && ent->size > 0) {
+					ent->ref_count = 0;
+					ent->ref_w_count = 0;
+					ent->i_ino = alloc_ino(&ctx);
+					ent->size = 0;
+					timespec_get(&newent->mtime, TIME_UTC);
+				}
 				ent->ref_count++;
-				if ((access & O_RDWR) || (access & O_WRONLY)) {
-					newent->ref_w_count++;
+				if ((flags & O_RDWR) || (flags & O_WRONLY)) {
+					ent->ref_w_count++;
 				}
 				*(uint64_t *)(user_data->iov[1].buffer) =
 				    ent->i_ino;
@@ -392,7 +399,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			timespec_get(&newent->mtime, TIME_UTC);
 			timespec_get(&newent->ctime, TIME_UTC);
 			newent->ref_count = 1;
-			if ((access & O_RDWR) || (access & O_WRONLY)) {
+			if ((flags & O_RDWR) || (flags & O_WRONLY)) {
 				newent->ref_w_count = 1;
 			} else {
 				newent->ref_w_count = 0;
@@ -507,6 +514,12 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 			    path);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 		} else {
+			if (((open >> 3) & 1) && ent->size > 0) {
+				ent->i_ino = alloc_ino(&ctx);
+				ent->size = 0;
+				ent->ref_count = 0;
+				ent->ref_w_count = 0;
+			}
 			st->chunk_size = ent->chunk_size;
 			st->i_ino = ent->i_ino;
 			st->mode = ent->mode;
