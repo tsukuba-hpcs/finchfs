@@ -111,8 +111,9 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 
 	mode |= S_IFREG;
 	ret = fs_rpc_inode_create(
-	    p, flags & 0b11 + ((flags & O_TRUNC) != 0) << 2, mode, chunk_size,
-	    &fd_table[fd].i_ino, &fd_table[fd].size, &fd_table[fd].eid);
+	    p, (flags & 0b11) + (((flags & O_TRUNC) != 0) << 2), mode,
+	    chunk_size, &fd_table[fd].i_ino, &fd_table[fd].size,
+	    &fd_table[fd].eid);
 	if (ret) {
 		free(fd_table[fd].path);
 		fd_table[fd].path = NULL;
