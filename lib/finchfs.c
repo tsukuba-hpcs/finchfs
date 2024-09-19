@@ -81,7 +81,7 @@ finchfs_set_chunk_size(size_t chunk_size)
 int
 finchfs_create(const char *path, int32_t flags, mode_t mode)
 {
-	log_debug("finchfs_create_chunk_size() called path=%s", path);
+	log_debug("finchfs_create() called path=%s", path);
 	return finchfs_create_chunk_size(path, flags, mode, finchfs_chunk_size);
 }
 
@@ -114,7 +114,7 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 
 	mode |= S_IFREG;
 	ret = fs_rpc_inode_create(
-	    p, (flags & 0b11) + (((flags & O_TRUNC) != 0) << 2), mode,
+	    NULL, p, (flags & 0b11) + (((flags & O_TRUNC) != 0) << 2), mode,
 	    chunk_size, &fd_table[fd].i_ino, &fd_table[fd].size,
 	    fd_table[fd].eid);
 	if (ret) {
@@ -146,14 +146,15 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].pos = 0;
 	fs_stat_t st;
 	if (flags & __O_DIRECTORY) {
-		ret = fs_rpc_inode_open_dir(p, fd_table[fd].eid, &st, 1 << 4);
+		ret = fs_rpc_inode_open_dir(NULL, p, fd_table[fd].eid, &st,
+					    1 << 4);
 		if (ret) {
 			free(fd_table[fd].path);
 			fd_table[fd].path = NULL;
 			return (-1);
 		}
 	} else {
-		ret = fs_rpc_inode_stat(p, &st,
+		ret = fs_rpc_inode_stat(NULL, p, &st,
 					(((flags & O_TRUNC) != 0) << 3) +
 					    (fd_table[fd].access << 1) + 1);
 		if (ret) {
@@ -168,12 +169,12 @@ finchfs_open(const char *path, int32_t flags)
 			fd_table[fd].path = NULL;
 			return (-1);
 		}
+		fd_table[fd].eid[0] = st.eid;
 	}
 	fd_table[fd].i_ino = st.i_ino;
 	fd_table[fd].mode = st.mode;
 	fd_table[fd].chunk_size = st.chunk_size;
 	fd_table[fd].size = st.size;
-	fd_table[fd].eid[0] = st.eid;
 	log_debug("finchfs_open() called path=%s inode=%d chunk_size=%zu", path,
 		  st.i_ino, st.chunk_size);
 	return (fd);
@@ -187,9 +188,12 @@ finchfs_close(int fd)
 		errno = EBADF;
 		return (-1);
 	}
-	int ret;
-	ret = fs_rpc_inode_close(fd_table[fd].path, fd_table[fd].eid[0],
-				 fd_table[fd].access, fd_table[fd].size);
+	int ret = 0;
+	if (!S_ISDIR(fd_table[fd].mode)) {
+		ret =
+		    fs_rpc_inode_close(fd_table[fd].path, fd_table[fd].eid[0],
+				       fd_table[fd].access, fd_table[fd].size);
+	}
 	free(fd_table[fd].path);
 	fd_table[fd].path = NULL;
 	return (ret);
@@ -465,7 +469,7 @@ finchfs_stat(const char *path, struct stat *st)
 	char *p = canonical_path(path);
 	fs_stat_t fst;
 	int ret;
-	ret = fs_rpc_inode_stat(p, &fst, 0);
+	ret = fs_rpc_inode_stat(NULL, p, &fst, 0);
 	if (ret) {
 		free(p);
 		return (-1);
@@ -494,7 +498,7 @@ finchfs_fstat(int fd, struct stat *st)
 	}
 	fs_stat_t fst;
 	int ret;
-	ret = fs_rpc_inode_stat(fd_table[fd].path, &fst, 0);
+	ret = fs_rpc_inode_stat(NULL, fd_table[fd].path, &fst, 0);
 	if (ret) {
 		return (-1);
 	}
@@ -533,7 +537,7 @@ finchfs_rename(const char *oldpath, const char *newpath)
 	char *newp = canonical_path(newpath);
 	fs_stat_t st;
 	uint64_t eid;
-	ret = fs_rpc_inode_stat(oldp, &st, 0);
+	ret = fs_rpc_inode_stat(NULL, oldp, &st, 0);
 	if (ret) {
 		free(oldp);
 		free(newp);
@@ -554,8 +558,8 @@ finchfs_rename(const char *oldpath, const char *newpath)
 		return (-1);
 	}
 	log_debug("finchfs_rename(): unlink inode=%d", st.i_ino);
-	ret = fs_rpc_inode_create(newp, 0, st.mode, st.chunk_size, &st.i_ino,
-				  &st.size, &eid);
+	ret = fs_rpc_inode_create(NULL, newp, 0, st.mode, st.chunk_size,
+				  &st.i_ino, &st.size, &eid);
 	free(oldp);
 	free(newp);
 	return (ret);
@@ -572,4 +576,150 @@ finchfs_find(const char *path, const char *query,
 	ret = fs_rpc_find(p, query, param, buf, filler);
 	free(p);
 	return (ret);
+}
+
+int
+finchfs_createat(int dirfd, const char *pathname, int flags, mode_t mode)
+{
+	log_debug("finchfs_createat() called dirfd=%d path=%s", dirfd,
+		  pathname);
+	return finchfs_createat_chunk_size(dirfd, pathname, flags, mode,
+					   finchfs_chunk_size);
+}
+
+int
+finchfs_createat_chunk_size(int dirfd, const char *pathname, int flags,
+			    mode_t mode, size_t chunk_size)
+{
+	log_debug("finchfs_createat_chunk_size() called dirfd=%d path=%s "
+		  "chunk_size=%zu",
+		  dirfd, pathname, chunk_size);
+	if (dirfd < 0 || dirfd >= fd_table_size ||
+	    fd_table[dirfd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	char *p = canonical_path(pathname);
+	int ret;
+	int fd;
+	for (fd = 0; fd < fd_table_size; ++fd) {
+		if (fd_table[fd].path == NULL) {
+			break;
+		}
+	}
+	if (fd == fd_table_size) {
+		errno = EMFILE;
+		return (-1);
+	}
+	fd_table[fd].path = p;
+	fd_table[fd].access = flags & 0b11;
+	fd_table[fd].mode = mode;
+	fd_table[fd].chunk_size = chunk_size;
+	fd_table[fd].pos = 0;
+	fd_table[fd].i_ino = 0;
+	fd_table[fd].size = 0;
+	fd_table[fd].eid[0] = 0;
+
+	mode |= S_IFREG;
+	ret = fs_rpc_inode_create(
+	    fd_table[dirfd].eid, p,
+	    (flags & 0b11) + (((flags & O_TRUNC) != 0) << 2), mode, chunk_size,
+	    &fd_table[fd].i_ino, &fd_table[fd].size, fd_table[fd].eid);
+	if (ret) {
+		free(fd_table[fd].path);
+		fd_table[fd].path = NULL;
+		return (-1);
+	}
+	return (fd);
+}
+
+int
+finchfs_openat(int dirfd, const char *pathname, int flags)
+{
+	log_debug("finchfs_openat() called dirfd=%d path=%s", dirfd, pathname);
+	if (dirfd < 0 || dirfd >= fd_table_size ||
+	    fd_table[dirfd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	char *p = canonical_path(pathname);
+	int ret;
+	int fd;
+	for (fd = 0; fd < fd_table_size; ++fd) {
+		if (fd_table[fd].path == NULL) {
+			break;
+		}
+	}
+	if (fd == fd_table_size) {
+		errno = EMFILE;
+		return (-1);
+	}
+	fd_table[fd].path = p;
+	fd_table[fd].access = flags & 0b11;
+	fd_table[fd].pos = 0;
+	fs_stat_t st;
+	if (flags & __O_DIRECTORY) {
+		ret = fs_rpc_inode_open_dir(fd_table[dirfd].eid, p,
+					    fd_table[fd].eid, &st, 1 << 4);
+		if (ret) {
+			free(fd_table[fd].path);
+			fd_table[fd].path = NULL;
+			return (-1);
+		}
+	} else {
+		ret = fs_rpc_inode_stat(fd_table[dirfd].eid, p, &st,
+					(((flags & O_TRUNC) != 0) << 3) +
+					    (fd_table[fd].access << 1) + 1);
+		if (ret) {
+			free(fd_table[fd].path);
+			fd_table[fd].path = NULL;
+			return (-1);
+		}
+		if (S_ISDIR(st.mode)) {
+			log_error(
+			    "To open directory, please set flag __O_DIRECTORY");
+			free(fd_table[fd].path);
+			fd_table[fd].path = NULL;
+			return (-1);
+		}
+		fd_table[fd].eid[0] = st.eid;
+	}
+	fd_table[fd].i_ino = st.i_ino;
+	fd_table[fd].mode = st.mode;
+	fd_table[fd].chunk_size = st.chunk_size;
+	fd_table[fd].size = st.size;
+	log_debug("finchfs_openat() called path=%s inode=%d chunk_size=%zu", p,
+		  st.i_ino, st.chunk_size);
+	return (fd);
+}
+
+int
+finchfs_fstatat(int dirfd, const char *pathname, struct stat *st, int flags)
+{
+	log_debug("finchfs_fstatat() called dirfd=%d path=%s", dirfd, pathname);
+	if (dirfd < 0 || dirfd >= fd_table_size ||
+	    fd_table[dirfd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	char *p = canonical_path(pathname);
+	fs_stat_t fst;
+	int ret;
+	ret = fs_rpc_inode_stat(fd_table[dirfd].eid, p, &fst, 0);
+	if (ret) {
+		free(p);
+		return (-1);
+	}
+	st->st_mode = fst.mode;
+	st->st_uid = getuid();
+	st->st_gid = getgid();
+	st->st_size = fst.size;
+	st->st_mtim = fst.mtime;
+	st->st_ctim = fst.ctime;
+	st->st_nlink = 1;
+	st->st_ino = fst.i_ino;
+	st->st_blksize = fst.chunk_size;
+	st->st_blocks = NUM_BLOCKS(fst.size);
+	free(p);
+	return (0);
 }

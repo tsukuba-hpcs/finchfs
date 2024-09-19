@@ -18,10 +18,11 @@
 #define RPC_FIND_REP 0x12
 
 int fs_rpc_mkdir(const char *path, mode_t mode);
-int fs_rpc_inode_create(const char *path, uint8_t flags, mode_t mode,
-			size_t chunk_size, uint64_t *i_ino, size_t *size,
-			uint64_t *eid);
-int fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open);
+int fs_rpc_inode_create(uint64_t *base, const char *path, uint8_t flags,
+			mode_t mode, size_t chunk_size, uint64_t *i_ino,
+			size_t *size, uint64_t *eid);
+int fs_rpc_inode_stat(uint64_t *base, const char *path, fs_stat_t *st,
+		      uint8_t open);
 int fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size);
 int fs_rpc_inode_close(const char *path, uint64_t eid, uint8_t access,
 		       size_t size);
@@ -31,8 +32,8 @@ ssize_t fs_async_rpc_inode_write_wait(void **hdles, int nreqs);
 void *fs_async_rpc_inode_read(uint64_t i_ino, uint64_t index, off_t offset,
 			      size_t size, void *buf);
 ssize_t fs_async_rpc_inode_read_wait(void **hdles, int nreqs, size_t size);
-int fs_rpc_inode_open_dir(const char *path, uint64_t *eid, fs_stat_t *st,
-			  uint8_t open);
+int fs_rpc_inode_open_dir(uint64_t *base, const char *path, uint64_t *eid,
+			  fs_stat_t *st, uint8_t open);
 int fs_rpc_readdir(const char *path, void *arg,
 		   void (*filler)(void *, const char *, const struct stat *));
 int fs_rpc_inode_unlink(const char *path, uint64_t *i_ino);

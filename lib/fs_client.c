@@ -678,24 +678,27 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 }
 
 int
-fs_rpc_inode_create(const char *path, uint8_t flags, mode_t mode,
-		    size_t chunk_size, uint64_t *i_ino, size_t *size,
-		    uint64_t *eid)
+fs_rpc_inode_create(uint64_t *base, const char *path, uint8_t flags,
+		    mode_t mode, size_t chunk_size, uint64_t *i_ino,
+		    size_t *size, uint64_t *eid)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
-	ucp_dt_iov_t iov[6];
-	iov[0].buffer = (void *)path;
-	iov[0].length = strlen(path) + 1;
-	iov[1].buffer = &flags;
-	iov[1].length = sizeof(flags);
-	iov[2].buffer = &mode;
-	iov[2].length = sizeof(mode);
-	iov[3].buffer = &chunk_size;
-	iov[3].length = sizeof(chunk_size);
-	iov[4].buffer = i_ino;
-	iov[4].length = sizeof(*i_ino);
-	iov[5].buffer = size;
-	iov[5].length = sizeof(*size);
+	ucp_dt_iov_t iov[7];
+	uint64_t zero = 0;
+	iov[0].buffer = (base == NULL) ? &zero : &base[target];
+	iov[0].length = sizeof(uint64_t);
+	iov[1].buffer = (void *)path;
+	iov[1].length = strlen(path) + 1;
+	iov[2].buffer = &flags;
+	iov[2].length = sizeof(flags);
+	iov[3].buffer = &mode;
+	iov[3].length = sizeof(mode);
+	iov[4].buffer = &chunk_size;
+	iov[4].length = sizeof(chunk_size);
+	iov[5].buffer = i_ino;
+	iov[5].length = sizeof(*i_ino);
+	iov[6].buffer = size;
+	iov[6].length = sizeof(*size);
 
 	inode_create_handle_t handle;
 	handle.ret = FINCH_INPROGRESS;
@@ -714,7 +717,7 @@ fs_rpc_inode_create(const char *path, uint8_t flags, mode_t mode,
 	ucs_status_ptr_t req;
 	req =
 	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_CREATE_REQ,
-			    &handle_addr, sizeof(handle_addr), iov, 6, &rparam);
+			    &handle_addr, sizeof(handle_addr), iov, 7, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
@@ -888,14 +891,17 @@ fs_rpc_inode_unlink_all(const char *path)
 }
 
 int
-fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open)
+fs_rpc_inode_stat(uint64_t *base, const char *path, fs_stat_t *st, uint8_t open)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
-	ucp_dt_iov_t iov[2];
-	iov[0].buffer = &open;
-	iov[0].length = sizeof(open);
-	iov[1].buffer = (void *)path;
-	iov[1].length = strlen(path) + 1;
+	ucp_dt_iov_t iov[3];
+	uint64_t zero = 0;
+	iov[0].buffer = (base == NULL) ? &zero : &base[target];
+	iov[0].length = sizeof(uint64_t);
+	iov[1].buffer = &open;
+	iov[1].length = sizeof(open);
+	iov[2].buffer = (void *)path;
+	iov[2].length = strlen(path) + 1;
 
 	inode_stat_handle_t handle;
 	handle.ret = FINCH_INPROGRESS;
@@ -913,7 +919,7 @@ fs_rpc_inode_stat(const char *path, fs_stat_t *st, uint8_t open)
 	ucs_status_ptr_t req;
 	req =
 	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_STAT_REQ,
-			    &handle_addr, sizeof(handle_addr), iov, 2, &rparam);
+			    &handle_addr, sizeof(handle_addr), iov, 3, &rparam);
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
 		ucp_worker_progress(env.ucp_worker);
@@ -1328,19 +1334,22 @@ fs_async_rpc_inode_read_wait(void **hdles, int nreqs, size_t size)
 }
 
 int
-fs_rpc_inode_open_dir(const char *path, uint64_t *eid, fs_stat_t *st,
-		      uint8_t open)
+fs_rpc_inode_open_dir(uint64_t *base, const char *path, uint64_t *eid,
+		      fs_stat_t *st, uint8_t open)
 {
-	ucp_dt_iov_t iov[2];
-	iov[0].buffer = &open;
-	iov[0].length = sizeof(open);
-	iov[1].buffer = (void *)path;
-	iov[1].length = strlen(path) + 1;
-
+	ucp_dt_iov_t *iov = malloc(sizeof(ucp_dt_iov_t) * 3 * env.nvprocs);
+	uint64_t zero = 0;
 	inode_stat_handle_t *handle =
 	    malloc(sizeof(inode_stat_handle_t) * env.nvprocs);
 	void **handle_addr = malloc(sizeof(void *) * env.nvprocs);
+
 	for (int i = 0; i < env.nvprocs; i++) {
+		iov[i * 3].buffer = (base == NULL) ? &zero : &base[i];
+		iov[i * 3].length = sizeof(uint64_t);
+		iov[i * 3 + 1].buffer = &open;
+		iov[i * 3 + 1].length = sizeof(open);
+		iov[i * 3 + 2].buffer = (void *)path;
+		iov[i * 3 + 2].length = strlen(path) + 1;
 		handle->ret = FINCH_INPROGRESS;
 		handle_addr[i] = &handle[i];
 	}
@@ -1356,7 +1365,7 @@ fs_rpc_inode_open_dir(const char *path, uint64_t *eid, fs_stat_t *st,
 	for (int i = 0; i < env.nvprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(
 		    env.ucp_eps[i], RPC_INODE_STAT_REQ, &handle_addr[i],
-		    sizeof(handle_addr[i]), iov, 2, &rparam);
+		    sizeof(handle_addr[i]), &iov[i * 3], 3, &rparam);
 	}
 	ucs_status_t status;
 	while (!all_req_finish(reqs, env.nvprocs)) {

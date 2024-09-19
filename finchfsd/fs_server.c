@@ -104,10 +104,10 @@ free_meta_tree(entry_t *entry)
 }
 
 static inline entry_t *
-get_parent_and_filename(char *filename, const char *path,
+get_parent_and_filename(uint64_t base, char *filename, const char *path,
 			struct worker_ctx *ctx)
 {
-	entry_t *e = &ctx->root;
+	entry_t *e = (base == 0) ? &ctx->root : (entry_t *)base;
 	char *prev = (char *)path;
 	char *p = prev;
 	int path_len = strlen(path) + 1;
@@ -136,9 +136,9 @@ get_parent_and_filename(char *filename, const char *path,
 }
 
 static inline entry_t *
-get_dir_entry(const char *path, struct worker_ctx *ctx)
+get_dir_entry(uint64_t base, const char *path, struct worker_ctx *ctx)
 {
-	entry_t *e = &ctx->root;
+	entry_t *e = (base == 0) ? &ctx->root : (entry_t *)base;
 	if (strcmp(path, "") == 0) {
 		return (e);
 	}
@@ -261,7 +261,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[0].length = sizeof(int);
 
 	char dirname[128];
-	entry_t *parent = get_parent_and_filename(dirname, path, &ctx);
+	entry_t *parent = get_parent_and_filename(0, dirname, path, &ctx);
 
 	if (parent == NULL) {
 		log_debug("fs_rpc_mkdir_recv() parent path=%s does not exist",
@@ -301,6 +301,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 			 void *data, size_t length,
 			 const ucp_am_recv_param_t *param)
 {
+	uint64_t base;
 	char *path;
 	uint8_t flags;
 	mode_t mode;
@@ -308,6 +309,8 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	uint64_t i_ino;
 	size_t size;
 	char *p = (char *)data;
+	base = *(uint64_t *)p;
+	p += sizeof(base);
 	path = (char *)p;
 	p += strlen(path) + 1;
 	flags = *(uint8_t *)p;
@@ -335,7 +338,7 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[2].length = sizeof(void *);
 
 	char filename[128];
-	entry_t *parent = get_parent_and_filename(filename, path, &ctx);
+	entry_t *parent = get_parent_and_filename(base, filename, path, &ctx);
 	if (parent == NULL) {
 		log_debug("fs_rpc_inode_create_recv() path=%s does not exist",
 			  path);
@@ -436,7 +439,7 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[1].length = sizeof(uint64_t);
 
 	char name[128];
-	entry_t *parent = get_parent_and_filename(name, path, &ctx);
+	entry_t *parent = get_parent_and_filename(0, name, path, &ctx);
 	if (parent == NULL) {
 		log_debug("fs_rpc_inode_unlink_recv() path=%s does not exist",
 			  path);
@@ -477,9 +480,12 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 		       void *data, size_t length,
 		       const ucp_am_recv_param_t *param)
 {
+	uint64_t base;
 	uint8_t open;
 	char *path;
 	char *p = (char *)data;
+	base = *(uint64_t *)p;
+	p += sizeof(base);
 	open = *(uint8_t *)p;
 	p += sizeof(open);
 	path = (char *)p;
@@ -498,7 +504,7 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 
 	fs_stat_t *st = (fs_stat_t *)user_data->iov[1].buffer;
 	if (open >> 4 & 1) {
-		entry_t *ent = get_dir_entry(path, &ctx);
+		entry_t *ent = get_dir_entry(base, path, &ctx);
 		if (ent == NULL) {
 			log_debug(
 			    "fs_rpc_inode_stat_recv() path=%s does not exist",
@@ -516,7 +522,8 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 		}
 	} else {
 		char name[128];
-		entry_t *parent = get_parent_and_filename(name, path, &ctx);
+		entry_t *parent =
+		    get_parent_and_filename(base, name, path, &ctx);
 		if (parent == NULL) {
 			log_debug(
 			    "fs_rpc_inode_stat_recv() path=%s does not exist",
@@ -810,7 +817,7 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 	rhdr->entry_count = 0;
 	user_data->n = 0;
 
-	entry_t *dir = get_dir_entry(path, &ctx);
+	entry_t *dir = get_dir_entry(0, path, &ctx);
 	ucs_status_t status;
 	if (dir == NULL) {
 		if (errno == ENOENT) {
@@ -903,8 +910,8 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 
 	char odirname[128];
 	char ndirname[128];
-	entry_t *oparent = get_parent_and_filename(odirname, opath, &ctx);
-	entry_t *nparent = get_parent_and_filename(ndirname, npath, &ctx);
+	entry_t *oparent = get_parent_and_filename(0, odirname, opath, &ctx);
+	entry_t *nparent = get_parent_and_filename(0, ndirname, npath, &ctx);
 
 	if (oparent == NULL) {
 		log_debug("fs_rpc_dir_move_recv() opath=%s does not exist",
@@ -1065,7 +1072,7 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 	rhdr->match_nentries = 0;
 	user_data->n = 0;
 
-	entry_t *dir = get_dir_entry(path, &ctx);
+	entry_t *dir = get_dir_entry(0, path, &ctx);
 	ucs_status_t status;
 	if (dir == NULL) {
 		if (errno == ENOENT) {

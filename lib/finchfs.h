@@ -33,3 +33,9 @@ struct finchfs_find_param {
 int finchfs_find(const char *path, const char *query,
 		 struct finchfs_find_param *param, void *buf,
 		 void (*filler)(void *, const char *));
+int finchfs_createat(int dirfd, const char *pathname, int flags, mode_t mode);
+int finchfs_createat_chunk_size(int dirfd, const char *pathname, int flags,
+				mode_t mode, size_t chunk_size);
+int finchfs_openat(int dirfd, const char *pathname, int flags);
+int finchfs_fstatat(int dirfd, const char *pathname, struct stat *buf,
+		    int flags);

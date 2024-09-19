@@ -877,6 +877,48 @@ TEST(FinchfsTest, Access_Perm_Write)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Createat)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/createat", 0777), 0);
+	int dirfd, fd;
+	dirfd = finchfs_open("/createat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	fd = finchfs_createat(dirfd, "file1", O_RDONLY, S_IRWXU);
+	EXPECT_EQ(fd, 1);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Openat)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int dirfd, fd;
+	dirfd = finchfs_open("/createat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	fd = finchfs_openat(dirfd, "file1", O_RDWR);
+	EXPECT_EQ(fd, 1);
+	char buf[1024];
+	EXPECT_EQ(finchfs_write(fd, buf, 1024), 1024);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Fstatat)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int dirfd, fd;
+	dirfd = finchfs_open("/createat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	struct stat st;
+	EXPECT_EQ(finchfs_fstatat(dirfd, "file1", &st, 0), 0);
+	EXPECT_EQ(st.st_size, 1024);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {
