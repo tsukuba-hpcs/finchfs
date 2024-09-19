@@ -73,6 +73,27 @@ TEST(FinchfsTest, Open4)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Open_Dir)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_open("/", O_RDONLY | O_DIRECTORY);
+	EXPECT_EQ(fd, 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Open_Dir_2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/open_dir", 0777), 0);
+	int fd;
+	fd = finchfs_open("/open_dir", O_RDONLY | O_DIRECTORY);
+	EXPECT_EQ(fd, 0);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 TEST(FinchfsTest, Write)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
