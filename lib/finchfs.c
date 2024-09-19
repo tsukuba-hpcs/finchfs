@@ -15,6 +15,7 @@
 
 static size_t finchfs_chunk_size = 65536;
 static const int fd_table_size = 1024;
+static int nvprocs = 1;
 static struct fd_table {
 	char *path;
 	uint8_t access;
@@ -23,7 +24,7 @@ static struct fd_table {
 	off_t pos;
 	size_t size;
 	uint64_t i_ino;
-	uint64_t eid;
+	uint64_t *eid;
 } *fd_table;
 
 #define IS_NULL_STRING(str) (str == NULL || str[0] == '\0')
@@ -41,12 +42,13 @@ finchfs_init(const char *addrfile)
 	if (!IS_NULL_STRING(chunk_size)) {
 		finchfs_chunk_size = strtoul(chunk_size, NULL, 10);
 	}
-	if (fs_client_init((char *)addrfile)) {
+	if (fs_client_init((char *)addrfile, &nvprocs)) {
 		return (-1);
 	}
 	fd_table = malloc(sizeof(struct fd_table) * fd_table_size);
 	for (int i = 0; i < fd_table_size; ++i) {
 		fd_table[i].path = NULL;
+		fd_table[i].eid = malloc(sizeof(uint64_t) * nvprocs);
 	}
 	return 0;
 }
@@ -58,6 +60,7 @@ finchfs_term()
 		if (fd_table[i].path) {
 			free(fd_table[i].path);
 		}
+		free(fd_table[i].eid);
 	}
 	free(fd_table);
 	return fs_client_term();
@@ -107,13 +110,13 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 	fd_table[fd].pos = 0;
 	fd_table[fd].i_ino = 0;
 	fd_table[fd].size = 0;
-	fd_table[fd].eid = 0;
+	fd_table[fd].eid[0] = 0;
 
 	mode |= S_IFREG;
 	ret = fs_rpc_inode_create(
 	    p, (flags & 0b11) + (((flags & O_TRUNC) != 0) << 2), mode,
 	    chunk_size, &fd_table[fd].i_ino, &fd_table[fd].size,
-	    &fd_table[fd].eid);
+	    fd_table[fd].eid);
 	if (ret) {
 		free(fd_table[fd].path);
 		fd_table[fd].path = NULL;
@@ -142,25 +145,35 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].access = flags & 0b11;
 	fd_table[fd].pos = 0;
 	fs_stat_t st;
-	ret = fs_rpc_inode_stat(p, &st,
-				(((flags & O_TRUNC) != 0) << 3) +
-				    (fd_table[fd].access << 1) + 1);
-	if (ret) {
-		free(fd_table[fd].path);
-		fd_table[fd].path = NULL;
-		return (-1);
-	}
-	if (S_ISDIR(st.mode)) {
-		log_error("directory open is not supported");
-		free(fd_table[fd].path);
-		fd_table[fd].path = NULL;
-		return (-1);
+	if (flags & __O_DIRECTORY) {
+		ret = fs_rpc_inode_open_dir(p, fd_table[fd].eid, &st, 1 << 4);
+		if (ret) {
+			free(fd_table[fd].path);
+			fd_table[fd].path = NULL;
+			return (-1);
+		}
+	} else {
+		ret = fs_rpc_inode_stat(p, &st,
+					(((flags & O_TRUNC) != 0) << 3) +
+					    (fd_table[fd].access << 1) + 1);
+		if (ret) {
+			free(fd_table[fd].path);
+			fd_table[fd].path = NULL;
+			return (-1);
+		}
+		if (S_ISDIR(st.mode)) {
+			log_error(
+			    "To open directory, please set flag __O_DIRECTORY");
+			free(fd_table[fd].path);
+			fd_table[fd].path = NULL;
+			return (-1);
+		}
 	}
 	fd_table[fd].i_ino = st.i_ino;
 	fd_table[fd].mode = st.mode;
 	fd_table[fd].chunk_size = st.chunk_size;
 	fd_table[fd].size = st.size;
-	fd_table[fd].eid = st.eid;
+	fd_table[fd].eid[0] = st.eid;
 	log_debug("finchfs_open() called path=%s inode=%d chunk_size=%zu", path,
 		  st.i_ino, st.chunk_size);
 	return (fd);
@@ -175,7 +188,7 @@ finchfs_close(int fd)
 		return (-1);
 	}
 	int ret;
-	ret = fs_rpc_inode_close(fd_table[fd].path, fd_table[fd].eid,
+	ret = fs_rpc_inode_close(fd_table[fd].path, fd_table[fd].eid[0],
 				 fd_table[fd].access, fd_table[fd].size);
 	free(fd_table[fd].path);
 	fd_table[fd].path = NULL;
@@ -405,7 +418,7 @@ finchfs_fsync(int fd)
 		return (-1);
 	}
 	int ret;
-	ret = fs_rpc_inode_fsync(fd_table[fd].path, fd_table[fd].eid,
+	ret = fs_rpc_inode_fsync(fd_table[fd].path, fd_table[fd].eid[0],
 				 &fd_table[fd].size);
 	return (ret);
 }

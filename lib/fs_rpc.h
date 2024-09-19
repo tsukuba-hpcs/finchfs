@@ -31,6 +31,8 @@ ssize_t fs_async_rpc_inode_write_wait(void **hdles, int nreqs);
 void *fs_async_rpc_inode_read(uint64_t i_ino, uint64_t index, off_t offset,
 			      size_t size, void *buf);
 ssize_t fs_async_rpc_inode_read_wait(void **hdles, int nreqs, size_t size);
+int fs_rpc_inode_open_dir(const char *path, uint64_t *eid, fs_stat_t *st,
+			  uint8_t open);
 int fs_rpc_readdir(const char *path, void *arg,
 		   void (*filler)(void *, const char *, const struct stat *));
 int fs_rpc_inode_unlink(const char *path, uint64_t *i_ino);
@@ -40,7 +42,7 @@ int fs_rpc_find(const char *path, const char *query,
 		struct finchfs_find_param *param, void *arg,
 		void (*filler)(void *, const char *));
 
-int fs_client_init(char *addrfile);
+int fs_client_init(char *addrfile, int *nvprocs);
 int fs_client_term(void);
 
 int fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs,

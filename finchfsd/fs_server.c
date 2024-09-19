@@ -497,29 +497,14 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[1].length = sizeof(fs_stat_t);
 
 	fs_stat_t *st = (fs_stat_t *)user_data->iov[1].buffer;
-	char name[128];
-	entry_t *parent = get_parent_and_filename(name, path, &ctx);
-	if (parent == NULL) {
-		log_debug("fs_rpc_inode_stat_recv() path=%s does not exist",
-			  path);
-		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
-	} else {
-		entry_t key = {
-		    .name = name,
-		};
-		entry_t *ent = RB_FIND(entrytree, &parent->entries, &key);
+	if (open >> 4 & 1) {
+		entry_t *ent = get_dir_entry(path, &ctx);
 		if (ent == NULL) {
 			log_debug(
 			    "fs_rpc_inode_stat_recv() path=%s does not exist",
 			    path);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 		} else {
-			if (((open >> 3) & 1) && ent->size > 0) {
-				ent->i_ino = alloc_ino(&ctx);
-				ent->size = 0;
-				ent->ref_count = 0;
-				ent->ref_w_count = 0;
-			}
 			st->chunk_size = ent->chunk_size;
 			st->i_ino = ent->i_ino;
 			st->mode = ent->mode;
@@ -528,12 +513,49 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 			st->size = ent->size;
 			memcpy(&st->eid, &ent, sizeof(ent));
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-			if (open) {
-				ent->ref_count++;
-			}
-			if (((open >> 1) & O_RDWR) ||
-			    ((open >> 1) & O_WRONLY)) {
-				ent->ref_w_count++;
+		}
+	} else {
+		char name[128];
+		entry_t *parent = get_parent_and_filename(name, path, &ctx);
+		if (parent == NULL) {
+			log_debug(
+			    "fs_rpc_inode_stat_recv() path=%s does not exist",
+			    path);
+			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+		} else {
+			entry_t key = {
+			    .name = name,
+			};
+			entry_t *ent =
+			    RB_FIND(entrytree, &parent->entries, &key);
+			if (ent == NULL) {
+				log_debug("fs_rpc_inode_stat_recv() path=%s "
+					  "does not exist",
+					  path);
+				*(int *)(user_data->iov[0].buffer) =
+				    FINCH_ENOENT;
+			} else {
+				if (((open >> 3) & 1) && ent->size > 0) {
+					ent->i_ino = alloc_ino(&ctx);
+					ent->size = 0;
+					ent->ref_count = 0;
+					ent->ref_w_count = 0;
+				}
+				st->chunk_size = ent->chunk_size;
+				st->i_ino = ent->i_ino;
+				st->mode = ent->mode;
+				st->mtime = ent->mtime;
+				st->ctime = ent->ctime;
+				st->size = ent->size;
+				memcpy(&st->eid, &ent, sizeof(ent));
+				*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+				if (open) {
+					ent->ref_count++;
+				}
+				if (((open >> 1) & O_RDWR) ||
+				    ((open >> 1) & O_WRONLY)) {
+					ent->ref_w_count++;
+				}
 			}
 		}
 	}

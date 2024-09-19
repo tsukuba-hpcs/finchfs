@@ -295,7 +295,7 @@ ep_err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 }
 
 int
-fs_client_init(char *addrfile)
+fs_client_init(char *addrfile, int *nvprocs)
 {
 	size_t addr_len;
 	int fd;
@@ -322,6 +322,7 @@ fs_client_init(char *addrfile)
 		return (-1);
 	}
 	log_debug("addr_len: %zu, nvprocs: %d", addr_len, env.nvprocs);
+	*nvprocs = env.nvprocs;
 	addr_allprocs = malloc(addr_len * env.nvprocs);
 	if (read(fd, addr_allprocs, addr_len * env.nvprocs) !=
 	    addr_len * env.nvprocs) {
@@ -1324,6 +1325,98 @@ fs_async_rpc_inode_read_wait(void **hdles, int nreqs, size_t size)
 		free(handles[i]);
 	}
 	return (ss);
+}
+
+int
+fs_rpc_inode_open_dir(const char *path, uint64_t *eid, fs_stat_t *st,
+		      uint8_t open)
+{
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = &open;
+	iov[0].length = sizeof(open);
+	iov[1].buffer = (void *)path;
+	iov[1].length = strlen(path) + 1;
+
+	inode_stat_handle_t *handle =
+	    malloc(sizeof(inode_stat_handle_t) * env.nvprocs);
+	void **handle_addr = malloc(sizeof(void *) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		handle->ret = FINCH_INPROGRESS;
+		handle_addr[i] = &handle[i];
+	}
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		reqs[i] = ucp_am_send_nbx(
+		    env.ucp_eps[i], RPC_INODE_STAT_REQ, &handle_addr[i],
+		    sizeof(handle_addr[i]), iov, 2, &rparam);
+	}
+	ucs_status_t status;
+	while (!all_req_finish(reqs, env.nvprocs)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	int nokreq = 0;
+	int *okidx = malloc(sizeof(int) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		if (reqs[i] == NULL) {
+			okidx[nokreq++] = i;
+			continue;
+		}
+		status = ucp_request_check_status(reqs[i]);
+		if (status != UCS_OK) {
+			log_error("fs_rpc_inode_open_dir: ucp_am_send_nbx() "
+				  "failed at %d: %s",
+				  i, ucs_status_string(status));
+			return (-1);
+		} else {
+			okidx[nokreq++] = i;
+		}
+		ucp_request_free(reqs[i]);
+	}
+	if (nokreq < env.nvprocs) {
+		log_error("fs_rpc_inode_open_dir: ucp_am_send_nbx() failed");
+	} else {
+		log_debug("fs_rpc_inode_open_dir: ucp_am_send_nbx() succeeded");
+	}
+	free(reqs);
+	int **rets = malloc(sizeof(int *) * nokreq);
+	for (int i = 0; i < nokreq; i++) {
+		rets[i] = &handle[okidx[i]].ret;
+	}
+	while (!all_ret_finish(rets, nokreq)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	free(rets);
+	if (nokreq < env.nvprocs) {
+		free(handle);
+		log_error(
+		    "fs_rpc_inode_open_dir: open() failed nokreq=%d nreqs=%d",
+		    nokreq, env.nvprocs);
+		return (-1);
+	}
+	int r = 0;
+	for (int i = 0; i < env.nvprocs; i++) {
+		if (handle[i].ret != FINCH_OK) {
+			log_error(
+			    "fs_rpc_inode_open_dir: open() failed at %d: %s", i,
+			    strerror(-handle[i].ret));
+			errno = -handle[i].ret;
+			r = -1;
+		} else {
+			*st = handle[i].st;
+			eid[i] = handle[i].st.eid;
+		}
+	}
+	free(handle);
+	log_debug("fs_rpc_inode_open_dir: succeeded");
+	return (r);
 }
 
 int
