@@ -53,6 +53,13 @@ typedef struct {
 	char path[];
 } find_entry_t;
 
+typedef struct {
+	void *handle;
+	uint64_t pos;
+	size_t count;
+	int ret;
+} getdents_header_t;
+
 /* Number of 512B blocks */
 #define NUM_BLOCKS(size) ((size + 511) / 512)
 

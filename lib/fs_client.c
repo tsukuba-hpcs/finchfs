@@ -287,6 +287,29 @@ fs_rpc_find_reply(void *arg, const void *header, size_t header_length,
 	return (UCS_OK);
 }
 
+typedef struct {
+	int ret;
+	void *buf;
+	getdents_header_t header;
+	uint64_t pos;
+	size_t count;
+} getdents_handle_t;
+
+ucs_status_t
+fs_rpc_getdents_reply(void *arg, const void *header, size_t header_length,
+		      void *data, size_t length,
+		      const ucp_am_recv_param_t *param)
+{
+	getdents_header_t *hdr = (getdents_header_t *)header;
+	getdents_handle_t *handle = hdr->handle;
+	log_debug("fs_rpc_getdents_reply: count=%zu", hdr->count);
+	memcpy(handle->buf, data, hdr->count);
+	handle->ret = hdr->ret;
+	handle->pos = hdr->pos;
+	handle->count = hdr->count;
+	return (UCS_OK);
+}
+
 static void
 ep_err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
 {
@@ -491,6 +514,21 @@ fs_client_init(char *addrfile, int *nvprocs)
 	if ((status = ucp_worker_set_am_recv_handler(
 		 env.ucp_worker, &fsync_reply_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(inode fsync) failed: "
+			  "%s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t getdents_reply_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_GETDENTS_REP,
+	    .cb = fs_rpc_getdents_reply,
+	    .arg = NULL,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 env.ucp_worker, &getdents_reply_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(getdents) failed: "
 			  "%s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1395,6 +1433,7 @@ fs_rpc_inode_open_dir(uint64_t *base, const char *path, uint64_t *eid,
 		log_debug("fs_rpc_inode_open_dir: ucp_am_send_nbx() succeeded");
 	}
 	free(reqs);
+	free(iov);
 	int **rets = malloc(sizeof(int *) * nokreq);
 	for (int i = 0; i < nokreq; i++) {
 		rets[i] = &handle[okidx[i]].ret;
@@ -1702,4 +1741,58 @@ fs_rpc_find(const char *path, const char *query,
 	}
 	free(handles);
 	return (r);
+}
+
+int
+fs_rpc_getdents(int target, uint64_t *eid, uint64_t *pos, void *buf,
+		size_t *count)
+{
+	ucp_dt_iov_t iov[1];
+	iov[0].buffer = &eid[target];
+	iov[0].length = sizeof(eid[target]);
+
+	getdents_handle_t handle = {.ret = FINCH_INPROGRESS,
+				    .buf = buf,
+				    .header = {
+					.count = *count,
+					.pos = *pos,
+					.ret = FINCH_INPROGRESS,
+					.handle = &handle,
+				    }};
+	int *ret_addr = &handle.ret;
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t req;
+	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_GETDENTS_REQ,
+			      &handle.header, sizeof(handle.header), iov, 1,
+			      &rparam);
+
+	ucs_status_t status;
+	while (!all_req_finish(&req, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (req != NULL) {
+		status = ucp_request_check_status(req);
+		if (status != UCS_OK) {
+			log_error(
+			    "fs_rpc_getdents: ucp_am_send_nbx() failed: %s",
+			    ucs_status_string(status));
+			return (-1);
+		}
+		ucp_request_free(req);
+	}
+
+	log_debug("fs_rpc_getdents: ucp_am_send_nbx() succeeded");
+	while (!all_ret_finish(&ret_addr, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	*pos = handle.pos;
+	*count = handle.count;
+	return (handle.ret);
 }

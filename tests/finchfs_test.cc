@@ -3,6 +3,7 @@
 #include <ucp/api/ucp.h>
 #include <gtest/gtest.h>
 #include <fcntl.h>
+#include <dirent.h>
 extern "C" {
 #include <finchfs.h>
 }
@@ -915,6 +916,27 @@ TEST(FinchfsTest, Fstatat)
 	struct stat st;
 	EXPECT_EQ(finchfs_fstatat(dirfd, "file1", &st, 0), 0);
 	EXPECT_EQ(st.st_size, 1024);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+struct test_dirent {
+    unsigned long  d_ino;
+    unsigned long  d_off;
+    unsigned short d_reclen;
+    char           d_name[];
+};
+
+TEST(FinchfsTest, Getdents)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int dirfd;
+	dirfd = finchfs_open("/createat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	char buf[2048];
+	EXPECT_EQ(finchfs_getdents(dirfd, buf, 2048), 152);
+	struct test_dirent *ent = (struct test_dirent *)buf;
+	EXPECT_STREQ(ent->d_name, "file1");
 	EXPECT_EQ(finchfs_close(dirfd), 0);
 	EXPECT_EQ(finchfs_term(), 0);
 }

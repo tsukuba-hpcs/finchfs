@@ -39,3 +39,4 @@ int finchfs_createat_chunk_size(int dirfd, const char *pathname, int flags,
 int finchfs_openat(int dirfd, const char *pathname, int flags);
 int finchfs_fstatat(int dirfd, const char *pathname, struct stat *buf,
 		    int flags);
+ssize_t finchfs_getdents(int fd, void *dirp, size_t count);

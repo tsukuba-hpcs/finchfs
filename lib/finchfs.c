@@ -25,6 +25,10 @@ static struct fd_table {
 	size_t size;
 	uint64_t i_ino;
 	uint64_t *eid;
+	struct {
+		int rank;
+		uint64_t pos;
+	} getdents_state;
 } *fd_table;
 
 #define IS_NULL_STRING(str) (str == NULL || str[0] == '\0')
@@ -153,6 +157,8 @@ finchfs_open(const char *path, int32_t flags)
 			fd_table[fd].path = NULL;
 			return (-1);
 		}
+		fd_table[fd].getdents_state.rank = 0;
+		fd_table[fd].getdents_state.pos = 0;
 	} else {
 		ret = fs_rpc_inode_stat(NULL, p, &st,
 					(((flags & O_TRUNC) != 0) << 3) +
@@ -721,5 +727,44 @@ finchfs_fstatat(int dirfd, const char *pathname, struct stat *st, int flags)
 	st->st_blksize = fst.chunk_size;
 	st->st_blocks = NUM_BLOCKS(fst.size);
 	free(p);
+	return (0);
+}
+
+ssize_t
+finchfs_getdents(int fd, void *dirp, size_t count)
+{
+	log_debug("finchfs_getdents() called fd=%d", fd);
+	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	if (!S_ISDIR(fd_table[fd].mode)) {
+		errno = ENOTDIR;
+		return (-1);
+	}
+	int ret;
+	size_t c = count;
+
+	while (fd_table[fd].getdents_state.rank < nvprocs) {
+		ret = fs_rpc_getdents(
+		    fd_table[fd].getdents_state.rank, fd_table[fd].eid,
+		    &fd_table[fd].getdents_state.pos, dirp, &c);
+		switch (ret) {
+		case FINCH_ENOENT:
+			fd_table[fd].getdents_state.rank++;
+			fd_table[fd].getdents_state.pos = 0;
+			c = count;
+			continue;
+		case FINCH_INPROGRESS:
+			return (c);
+		case FINCH_OK:
+			fd_table[fd].getdents_state.rank++;
+			fd_table[fd].getdents_state.pos = 0;
+			return (c);
+		default:
+			errno = -ret;
+			return (-1);
+		}
+	}
 	return (0);
 }

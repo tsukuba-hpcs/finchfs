@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <fcntl.h>
+#include <dirent.h>
 #include "finchfs.h"
 #include "fs_types.h"
 #include "fs_rpc.h"
@@ -1155,6 +1156,94 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 	return (status);
 }
 
+struct finchfs_dirent {
+	unsigned long d_ino;
+	unsigned long d_off;
+	unsigned short d_reclen;
+	char d_name[128];
+	char d_type;
+};
+
+ucs_status_t
+fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
+		     void *data, size_t length,
+		     const ucp_am_recv_param_t *param)
+{
+	uint64_t eid = *(uint64_t *)data;
+	getdents_header_t *hdr = (getdents_header_t *)header;
+
+	log_debug("fs_rpc_getdents_recv() called");
+
+	contig_req_t *user_data = malloc(sizeof(contig_req_t));
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	getdents_header_t *rhdr = (getdents_header_t *)user_data->header;
+	user_data->buf = malloc(hdr->count);
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE |
+			    UCP_OP_ATTR_FIELD_CALLBACK |
+			    UCP_OP_ATTR_FIELD_USER_DATA,
+	    .cb =
+		{
+		    .send = fs_rpc_contig_reply_cb,
+		},
+	    .datatype = ucp_dt_make_contig(sizeof(char)),
+	    .user_data = user_data,
+	};
+
+	entry_t *dir = (entry_t *)eid;
+	entry_t *child = (hdr->pos == 0)
+			     ? entrytree_RB_MINMAX(&dir->entries, -1)
+			     : ((entry_t *)hdr->pos);
+	rhdr->ret = FINCH_ENOENT;
+	rhdr->count = 0;
+	rhdr->pos = 0;
+	struct finchfs_dirent *ent = NULL;
+	for (; (child) != ((void *)0); (child) = entrytree_RB_NEXT(child)) {
+		if (S_ISDIR(child->mode) && ctx.rank != 0) {
+			continue;
+		}
+		ent = (struct finchfs_dirent *)(user_data->buf + rhdr->count);
+		if (rhdr->count + sizeof(struct finchfs_dirent) > hdr->count) {
+			rhdr->ret = FINCH_INPROGRESS;
+			rhdr->pos = (uint64_t)child;
+			break;
+		}
+		rhdr->ret = FINCH_OK;
+		rhdr->count += sizeof(struct finchfs_dirent);
+		ent->d_ino = child->i_ino;
+		ent->d_off = rhdr->count;
+		ent->d_reclen = sizeof(struct finchfs_dirent);
+		strcpy(ent->d_name, child->name);
+		ent->d_type = S_ISDIR(child->mode) ? DT_DIR : DT_REG;
+	}
+	if (ent != NULL) {
+		ent->d_off = 0;
+	}
+	log_debug("fs_rpc_getdents_recv() sending count=%d", rhdr->count);
+
+	ucs_status_ptr_t req = ucp_am_send_nbx(
+	    param->reply_ep, RPC_GETDENTS_REP, rhdr, sizeof(*rhdr),
+	    user_data->buf, rhdr->count == 0 ? 1 : rhdr->count, &rparam);
+
+	if (req == NULL) {
+		free(user_data->header);
+		free(user_data->buf);
+		free(user_data);
+	} else if (UCS_PTR_IS_ERR(req)) {
+		log_error("ucp_am_send_nbx() failed: %s",
+			  ucs_status_string(UCS_PTR_STATUS(req)));
+		free(user_data->header);
+		free(user_data->buf);
+		free(user_data);
+		ucs_status_t status = UCS_PTR_STATUS(req);
+		ucp_request_free(req);
+		return (status);
+	}
+	return (UCS_OK);
+}
+
 int
 fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int lrank,
 	       int lnprocs, int *shutdown)
@@ -1322,6 +1411,19 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int lrank,
 	if ((status = ucp_worker_set_am_recv_handler(ctx.ucp_worker,
 						     &find_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(find) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t getdents_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_GETDENTS_REQ,
+	    .cb = fs_rpc_getdents_recv,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 ctx.ucp_worker, &getdents_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(getdents) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}

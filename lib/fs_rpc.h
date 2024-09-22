@@ -16,6 +16,8 @@
 #define RPC_READDIR_REP 0x10
 #define RPC_FIND_REQ 0x11
 #define RPC_FIND_REP 0x12
+#define RPC_GETDENTS_REQ 0x13
+#define RPC_GETDENTS_REP 0x14
 
 int fs_rpc_mkdir(const char *path, mode_t mode);
 int fs_rpc_inode_create(uint64_t *base, const char *path, uint8_t flags,
@@ -42,6 +44,8 @@ int fs_rpc_dir_move(const char *oldpath, const char *newpath);
 int fs_rpc_find(const char *path, const char *query,
 		struct finchfs_find_param *param, void *arg,
 		void (*filler)(void *, const char *));
+int fs_rpc_getdents(int target, uint64_t *eid, uint64_t *pos, void *buf,
+		    size_t *count);
 
 int fs_client_init(char *addrfile, int *nvprocs);
 int fs_client_term(void);
