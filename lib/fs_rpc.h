@@ -9,7 +9,7 @@
 #define RPC_INODE_READ_REQ 0x09
 #define RPC_INODE_READ_REP 0x0a
 #define RPC_INODE_UNLINK_REQ 0x0b
-#define RPC_DIR_MOVE_REQ 0x0c
+#define RPC_RENAME_REQ 0x0c
 #define RPC_INODE_STAT_UPDATE_REQ 0x0d
 #define RPC_INODE_FSYNC_REP 0x0e
 #define RPC_READDIR_REQ 0x0f
@@ -25,7 +25,7 @@ int fs_rpc_inode_create(uint64_t *base, const char *path, uint8_t flags,
 			size_t *size, uint64_t *eid);
 int fs_rpc_inode_stat(uint64_t *base, const char *path, fs_stat_t *st,
 		      uint8_t open);
-int fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size);
+int fs_rpc_inode_fsync(uint64_t i_ino, uint64_t eid, size_t *size);
 int fs_rpc_inode_close(const char *path, uint64_t eid, uint8_t access,
 		       size_t size);
 void *fs_async_rpc_inode_write(uint64_t i_ino, uint64_t index, off_t offset,
@@ -40,7 +40,8 @@ int fs_rpc_readdir(const char *path, void *arg,
 		   void (*filler)(void *, const char *, const struct stat *));
 int fs_rpc_inode_unlink(const char *path, uint64_t *i_ino);
 int fs_rpc_inode_unlink_all(const char *path);
-int fs_rpc_dir_move(const char *oldpath, const char *newpath);
+int fs_rpc_dir_rename(const char *oldpath, const char *newpath);
+int fs_rpc_file_rename(const char *oldpath, const char *newpath);
 int fs_rpc_find(const char *path, const char *query,
 		struct finchfs_find_param *param, void *arg,
 		void (*filler)(void *, const char *));

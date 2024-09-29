@@ -721,7 +721,7 @@ fs_rpc_inode_create(uint64_t *base, const char *path, uint8_t flags,
 		    size_t *size, uint64_t *eid)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
-	ucp_dt_iov_t iov[7];
+	ucp_dt_iov_t iov[5];
 	uint64_t zero = 0;
 	iov[0].buffer = (base == NULL) ? &zero : &base[target];
 	iov[0].length = sizeof(uint64_t);
@@ -733,10 +733,6 @@ fs_rpc_inode_create(uint64_t *base, const char *path, uint8_t flags,
 	iov[3].length = sizeof(mode);
 	iov[4].buffer = &chunk_size;
 	iov[4].length = sizeof(chunk_size);
-	iov[5].buffer = i_ino;
-	iov[5].length = sizeof(*i_ino);
-	iov[6].buffer = size;
-	iov[6].length = sizeof(*size);
 
 	inode_create_handle_t handle;
 	handle.ret = FINCH_INPROGRESS;
@@ -755,7 +751,7 @@ fs_rpc_inode_create(uint64_t *base, const char *path, uint8_t flags,
 	ucs_status_ptr_t req;
 	req =
 	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_CREATE_REQ,
-			    &handle_addr, sizeof(handle_addr), iov, 7, &rparam);
+			    &handle_addr, sizeof(handle_addr), iov, 5, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
@@ -966,7 +962,7 @@ fs_rpc_inode_stat(uint64_t *base, const char *path, fs_stat_t *st, uint8_t open)
 		status = ucp_request_check_status(req);
 		if (status != UCS_OK) {
 			log_error(
-			    "fs_rpc_inode_create: ucp_am_send_nbx() failed: %s",
+			    "fs_rpc_inode_stat: ucp_am_send_nbx() failed: %s",
 			    ucs_status_string(status));
 			return (-1);
 		}
@@ -995,9 +991,9 @@ fs_rpc_inode_stat(uint64_t *base, const char *path, fs_stat_t *st, uint8_t open)
 }
 
 int
-fs_rpc_inode_fsync(const char *path, uint64_t eid, size_t *size)
+fs_rpc_inode_fsync(uint64_t i_ino, uint64_t eid, size_t *size)
 {
-	int target = path_to_target_hash(path, env.nvprocs);
+	int target = i_ino % env.nvprocs;
 	size_t ssize = (*size) << 3;
 	ucp_dt_iov_t iov[2];
 	iov[0].buffer = &eid;
@@ -1555,7 +1551,7 @@ fs_rpc_readdir(const char *path, void *arg,
 }
 
 int
-fs_rpc_dir_move(const char *oldpath, const char *newpath)
+fs_rpc_dir_rename(const char *oldpath, const char *newpath)
 {
 	ucp_dt_iov_t iov[2];
 	iov[0].buffer = (void *)oldpath;
@@ -1581,7 +1577,7 @@ fs_rpc_dir_move(const char *oldpath, const char *newpath)
 
 	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
-		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_DIR_MOVE_REQ,
+		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_RENAME_REQ,
 					  &rets_addr[i], sizeof(void *), iov, 2,
 					  &rparam);
 	}
@@ -1640,6 +1636,61 @@ fs_rpc_dir_move(const char *oldpath, const char *newpath)
 	free(ret);
 	log_debug("fs_rpc_dir_move: succeeded");
 	return (r);
+}
+
+int
+fs_rpc_file_rename(const char *oldpath, const char *newpath)
+{
+	int otarget = path_to_target_hash(oldpath, env.nvprocs);
+	int ntarget = path_to_target_hash(newpath, env.nvprocs);
+	if (otarget != ntarget) {
+		errno = ENOTSUP;
+		return (-1);
+	}
+	ucp_dt_iov_t iov[2];
+	iov[0].buffer = (void *)oldpath;
+	iov[0].length = strlen(oldpath) + 1;
+	iov[1].buffer = (void *)newpath;
+	iov[1].length = strlen(newpath) + 1;
+
+	int ret = FINCH_INPROGRESS;
+	int *ret_addr = &ret;
+
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+
+	ucs_status_ptr_t req;
+	req = ucp_am_send_nbx(env.ucp_eps[otarget], RPC_RENAME_REQ, &ret_addr,
+			      sizeof(void *), iov, 2, &rparam);
+
+	ucs_status_t status;
+	while (!all_req_finish(&req, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (req != NULL) {
+		status = ucp_request_check_status(req);
+		if (status != UCS_OK) {
+			log_error("fs_rpc_inode_fsync: ucp_am_send_nbx() "
+				  "failed: %s",
+				  ucs_status_string(status));
+			errno = EIO;
+			return (-1);
+		}
+		ucp_request_free(req);
+	}
+	log_debug("fs_rpc_file_rename: ucp_am_send_nbx() succeeded");
+	while (!all_ret_finish(&ret_addr, 1)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	if (ret != FINCH_OK) {
+		errno = -ret;
+		return (-1);
+	}
+	return (0);
 }
 
 int

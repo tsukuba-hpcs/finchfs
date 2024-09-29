@@ -339,16 +339,17 @@ TEST(FinchfsTest, Rename)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
 	int fd;
+	EXPECT_EQ(finchfs_mkdir("/rename", S_IRWXU), 0);
 	char buf[128];
 	rnd_fill(buf, sizeof(buf));
-	fd = finchfs_create("/rename1_before", O_RDWR, S_IRWXU);
+	fd = finchfs_create("/rename_file", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	ssize_t n;
 	n = finchfs_write(fd, buf, sizeof(buf));
 	EXPECT_EQ(n, sizeof(buf));
 	finchfs_close(fd);
-	EXPECT_EQ(finchfs_rename("/rename1_before", "/rename1_after"), 0);
-	fd = finchfs_open("/rename1_after", O_RDWR);
+	EXPECT_EQ(finchfs_rename("/rename_file", "/rename/rename_file"), 0);
+	fd = finchfs_open("/rename/rename_file", O_RDWR);
 	EXPECT_EQ(fd, 0);
 	char buf2[128];
 	n = finchfs_read(fd, buf2, sizeof(buf2));

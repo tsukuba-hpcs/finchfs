@@ -307,8 +307,6 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	uint8_t flags;
 	mode_t mode;
 	size_t chunk_size;
-	uint64_t i_ino;
-	size_t size;
 	char *p = (char *)data;
 	base = *(uint64_t *)p;
 	p += sizeof(base);
@@ -319,10 +317,6 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	mode = *(mode_t *)p;
 	p += sizeof(mode);
 	chunk_size = *(size_t *)p;
-	p += sizeof(chunk_size);
-	i_ino = *(uint64_t *)p;
-	p += sizeof(i_ino);
-	size = *(size_t *)p;
 
 	log_debug("fs_rpc_inode_create_recv() called path=%s", path);
 
@@ -351,50 +345,24 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		ent = RB_INSERT(entrytree, &parent->entries, newent);
 
 		if (ent != NULL) {
-			if (i_ino > 0) {
-				RB_REMOVE(entrytree, &parent->entries, ent);
-				free(ent->name);
-				if (ent->ref_count == 0) {
-					free(ent);
-				} else {
-					ent->name = NULL;
-				}
-				newent->i_ino = i_ino;
-				newent->mode = mode;
-				newent->chunk_size = chunk_size;
-				newent->size = size;
-				timespec_get(&newent->mtime, TIME_UTC);
-				timespec_get(&newent->ctime, TIME_UTC);
-				RB_INSERT(entrytree, &parent->entries, newent);
-				*(uint64_t *)(user_data->iov[1].buffer) =
-				    newent->i_ino;
-				*(void **)user_data->iov[2].buffer = newent;
-			} else {
-				free(newent->name);
-				free(newent);
-				if (((flags >> 2) & 1) && ent->size > 0) {
-					ent->ref_count = 0;
-					ent->ref_w_count = 0;
-					ent->i_ino = alloc_ino(&ctx);
-					ent->size = 0;
-					timespec_get(&newent->mtime, TIME_UTC);
-				}
-				ent->ref_count++;
-				if ((flags & O_RDWR) || (flags & O_WRONLY)) {
-					ent->ref_w_count++;
-				}
-				*(uint64_t *)(user_data->iov[1].buffer) =
-				    ent->i_ino;
-				*(void **)(user_data->iov[2].buffer) = ent;
+			free(newent->name);
+			free(newent);
+			if (((flags >> 2) & 1) && ent->size > 0) {
+				ent->ref_count = 0;
+				ent->ref_w_count = 0;
+				ent->i_ino = alloc_ino(&ctx);
+				ent->size = 0;
+				timespec_get(&ent->mtime, TIME_UTC);
 			}
+			ent->ref_count++;
+			if ((flags & O_RDWR) || (flags & O_WRONLY)) {
+				ent->ref_w_count++;
+			}
+			*(uint64_t *)(user_data->iov[1].buffer) = ent->i_ino;
+			*(void **)(user_data->iov[2].buffer) = ent;
 		} else {
-			if (i_ino > 0) {
-				newent->i_ino = i_ino;
-				newent->size = size;
-			} else {
-				newent->i_ino = alloc_ino(&ctx);
-				newent->size = 0;
-			}
+			newent->i_ino = alloc_ino(&ctx);
+			newent->size = 0;
 			log_debug("fs_rpc_inode_create_recv() create path=%s "
 				  "inode=%lu",
 				  path, newent->i_ino);
@@ -892,9 +860,8 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 }
 
 ucs_status_t
-fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
-		     void *data, size_t length,
-		     const ucp_am_recv_param_t *param)
+fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
+		   void *data, size_t length, const ucp_am_recv_param_t *param)
 {
 	char *opath = (char *)data;
 	char *npath = (char *)UCS_PTR_BYTE_OFFSET(data, strlen(opath) + 1);
@@ -909,10 +876,10 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
 
-	char odirname[128];
-	char ndirname[128];
-	entry_t *oparent = get_parent_and_filename(0, odirname, opath, &ctx);
-	entry_t *nparent = get_parent_and_filename(0, ndirname, npath, &ctx);
+	char oname[128];
+	char nname[128];
+	entry_t *oparent = get_parent_and_filename(0, oname, opath, &ctx);
+	entry_t *nparent = get_parent_and_filename(0, nname, npath, &ctx);
 
 	if (oparent == NULL) {
 		log_debug("fs_rpc_dir_move_recv() opath=%s does not exist",
@@ -924,7 +891,7 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
 		entry_t key = {
-		    .name = odirname,
+		    .name = oname,
 		};
 		entry_t *ent = RB_FIND(entrytree, &oparent->entries, &key);
 		if (ent == NULL) {
@@ -932,16 +899,11 @@ fs_rpc_dir_move_recv(void *arg, const void *header, size_t header_length,
 			    "fs_rpc_dir_move_recv() opath=%s does not exist",
 			    opath);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
-		} else if (!S_ISDIR(ent->mode)) {
-			log_debug("fs_rpc_dir_move_recv() opath=%s is not a "
-				  "directory",
-				  opath);
-			*(int *)(user_data->iov[0].buffer) = FINCH_ENOTDIR;
 		} else {
 			entry_t *old;
 			RB_REMOVE(entrytree, &oparent->entries, ent);
 			free(ent->name);
-			ent->name = strdup(ndirname);
+			ent->name = strdup(nname);
 			old = RB_INSERT(entrytree, &nparent->entries, ent);
 			if (old != NULL) {
 				RB_REMOVE(entrytree, &nparent->entries, old);
@@ -1365,8 +1327,8 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int lrank,
 	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
 			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
-	    .id = RPC_DIR_MOVE_REQ,
-	    .cb = fs_rpc_dir_move_recv,
+	    .id = RPC_RENAME_REQ,
+	    .cb = fs_rpc_rename_recv,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
 		 ctx.ucp_worker, &dir_move_param)) != UCS_OK) {
