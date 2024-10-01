@@ -956,6 +956,7 @@ TEST(FinchfsTest, Mmap1)
 	EXPECT_NE(addr, MAP_FAILED);
 	EXPECT_STREQ(addr, text);
 	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_munmap(addr, 4096), 0);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 

@@ -42,3 +42,4 @@ int finchfs_fstatat(int dirfd, const char *pathname, struct stat *buf,
 ssize_t finchfs_getdents(int fd, void *dirp, size_t count);
 void *finchfs_mmap(void *addr, size_t length, int prot, int flags, int fd,
 		   off_t offset);
+int finchfs_munmap(void *addr, size_t length);

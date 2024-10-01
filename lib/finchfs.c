@@ -993,3 +993,22 @@ finchfs_mmap(void *addr, size_t length, int prot, int flags, int fd,
 	add_mmap_item(item);
 	return (addr);
 }
+
+int
+finchfs_munmap(void *addr, size_t length)
+{
+	struct uffdio_range uffdio_range;
+	uffdio_range.start = (uint64_t)addr;
+	uffdio_range.len = length;
+
+	if (ioctl(uffd, UFFDIO_UNREGISTER, &uffdio_range) < 0) {
+		return (-1);
+	}
+	if (del_mmap_item((uint64_t)addr, length)) {
+		return (-1);
+	}
+	if (munmap(addr, length)) {
+		return (-1);
+	}
+	return (0);
+}
