@@ -7,6 +7,14 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <time.h>
+#include <linux/userfaultfd.h>
+#include <sys/syscall.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <pthread.h>
+#include <poll.h>
+#include <sys/mman.h>
+#include <string.h>
 #include "config.h"
 #include "finchfs.h"
 #include "fs_types.h"
@@ -17,6 +25,7 @@
 static size_t finchfs_chunk_size = 65536;
 static const int fd_table_size = 1024;
 static int nvprocs = 1;
+static long uffd;
 static struct fd_table {
 	char *path;
 	uint8_t access;
@@ -34,13 +43,178 @@ static struct fd_table {
 	} getdents_state;
 } *fd_table;
 
+struct mmap_item;
+
+typedef struct mmap_item {
+	uint64_t addr;
+	size_t len;
+	uint64_t i_ino;
+	size_t chunk_size;
+	off_t offset;
+	size_t *size;
+	struct mmap_item *prev;
+	struct mmap_item *next;
+} mmap_item_t;
+
+struct mmap_manager {
+	mmap_item_t *head;
+	mmap_item_t *tail;
+} mm_mng;
+
+void
+add_mmap_item(mmap_item_t *item)
+{
+	item->prev = mm_mng.tail;
+	item->next = NULL;
+	if (mm_mng.tail) {
+		mm_mng.tail->next = item;
+	} else {
+		mm_mng.head = item;
+	}
+	mm_mng.tail = item;
+}
+
+int
+del_mmap_item(uint64_t addr, size_t len)
+{
+	mmap_item_t *cur = mm_mng.head;
+	while (cur) {
+		if (cur->addr == addr && cur->len == len) {
+			if (cur->prev) {
+				cur->prev->next = cur->next;
+			} else {
+				mm_mng.head = cur->next;
+			}
+			if (cur->next) {
+				cur->next->prev = cur->prev;
+			} else {
+				mm_mng.tail = cur->prev;
+			}
+			free(cur);
+			return (0);
+		}
+		cur = cur->next;
+	}
+	return (1);
+}
+
+mmap_item_t *
+query_mmap(uint64_t fault_addr)
+{
+	mmap_item_t *cur = mm_mng.tail;
+	while (cur) {
+		if (cur->addr <= fault_addr &&
+		    fault_addr < cur->addr + cur->len) {
+			return cur;
+		}
+		cur = cur->prev;
+	}
+	return (NULL);
+}
+
 #define IS_NULL_STRING(str) (str == NULL || str[0] == '\0')
+
+static void *
+fault_handler_thread(void *arg)
+{
+	struct pollfd pollfd;
+	struct uffdio_copy uffdio_copy;
+	int nready;
+	ssize_t nread;
+	struct uffd_msg msg;
+	uint64_t page_size = sysconf(_SC_PAGE_SIZE);
+	uint8_t *page = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+			     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	if (page == MAP_FAILED) {
+		log_error("mmap failed");
+		exit(1);
+	}
+	while (1) {
+		pollfd.fd = uffd;
+		pollfd.events = POLLIN;
+		nready = poll(&pollfd, 1, -1);
+		if (nready == -1) {
+			log_error("poll failed");
+			exit(1);
+		}
+		nread = read(uffd, &msg, sizeof(msg));
+		if (nread == 0) {
+			log_error("EOF on userfaultfd!\n");
+			exit(1);
+		}
+		if (nread < 0) {
+			log_error("read error");
+			exit(1);
+		}
+		if (msg.event != UFFD_EVENT_PAGEFAULT) {
+			log_error("Unexpected event on userfaultfd");
+			exit(1);
+		}
+		mmap_item_t *item = query_mmap(msg.arg.pagefault.address);
+		if (item == NULL) {
+			log_error("mapped area not found");
+			exit(1);
+		}
+		memset(page, 0, page_size);
+		uint64_t base =
+		    (uint64_t)msg.arg.pagefault.address & ~(page_size - 1);
+		off_t offset = base - item->addr + item->offset;
+		void *buf_p = (void *)page;
+		size_t size = page_size;
+		if (offset < 0) {
+			buf_p = page - offset;
+			size = page_size + offset;
+		}
+		uint64_t index = offset / item->chunk_size;
+		off_t local_pos = offset % item->chunk_size;
+		int nchunks = (local_pos + size + item->chunk_size - 1) /
+			      item->chunk_size;
+		void **hdles = malloc(sizeof(void *) * nchunks);
+		size_t tot = 0;
+		for (int i = 0; i < nchunks; ++i) {
+			size_t local_size = item->chunk_size - local_pos;
+			if (local_size > size - tot) {
+				local_size = size - tot;
+			}
+			tot += local_size;
+			hdles[i] = fs_async_rpc_inode_read(item->i_ino,
+							   index + i, local_pos,
+							   local_size, buf_p);
+			if (hdles[i] == NULL) {
+				log_error(
+				    "fs_async_rpc_inode_read failed at=%d", i);
+				exit(1);
+			}
+			local_pos = 0;
+			buf_p += local_size;
+		}
+		ssize_t ret =
+		    fs_async_rpc_inode_read_wait(hdles, nchunks, *item->size);
+		free(hdles);
+		if (ret < 0) {
+			log_error("fs_async_rpc_inode_read_wait failed");
+			exit(1);
+		}
+		uffdio_copy.src =
+		    offset < 0 ? (uint64_t)page - offset : (uint64_t)page;
+		uffdio_copy.dst = offset < 0 ? base - offset : base;
+		uffdio_copy.len = offset < 0 ? page_size + offset : page_size;
+		uffdio_copy.mode = 0;
+		uffdio_copy.copy = 0;
+		if (ioctl(uffd, UFFDIO_COPY, &uffdio_copy) < 0) {
+			log_error("ioctl error");
+			exit(1);
+		}
+	}
+}
 
 int
 finchfs_init(const char *addrfile)
 {
 	char *log_level;
 	char *chunk_size;
+	struct uffdio_api uffdio_api;
+	pthread_t fault_handler;
 	log_level = getenv("FINCHFS_LOG_LEVEL");
 	if (!IS_NULL_STRING(log_level)) {
 		log_set_level(log_level);
@@ -57,7 +231,24 @@ finchfs_init(const char *addrfile)
 		fd_table[i].path = NULL;
 		fd_table[i].eid = malloc(sizeof(uint64_t) * nvprocs);
 	}
-	return 0;
+	if ((uffd = syscall(__NR_userfaultfd, O_CLOEXEC | O_NONBLOCK)) < 0) {
+		log_error("syscall(__NR_userfaultfd) failed errno=%d", errno);
+		goto init_err;
+	}
+	uffdio_api.api = UFFD_API;
+	uffdio_api.features = 0;
+	if (ioctl(uffd, UFFDIO_API, &uffdio_api) < 0) {
+		log_error("ioctl(UFFDIO_API) failed");
+		goto init_err;
+	}
+	if (pthread_create(&fault_handler, NULL, fault_handler_thread, NULL)) {
+		log_error("pthread_create failed");
+		goto init_err;
+	}
+	return (0);
+init_err:
+	finchfs_term();
+	return (-1);
 }
 
 int
@@ -758,4 +949,47 @@ finchfs_getdents(int fd, void *dirp, size_t count)
 		}
 	}
 	return (0);
+}
+
+void *
+finchfs_mmap(void *addr, size_t length, int prot, int flags, int fd,
+	     off_t offset)
+{
+	struct uffdio_register uffdio_register;
+	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
+		errno = EBADF;
+		return (MAP_FAILED);
+	}
+	if (S_ISDIR(fd_table[fd].mode)) {
+		errno = EISDIR;
+		return (MAP_FAILED);
+	}
+	if ((flags & MAP_SHARED) || (flags & MAP_PRIVATE) == 0) {
+		errno = ENOTSUP;
+		return (MAP_FAILED);
+	}
+	if (flags & MAP_ANONYMOUS) {
+		errno = ENOTSUP;
+		return (MAP_FAILED);
+	}
+	addr = mmap(addr, length, prot, flags | MAP_ANONYMOUS, -1, offset);
+	if (addr == MAP_FAILED) {
+		return (MAP_FAILED);
+	}
+	uffdio_register.range.start = (unsigned long)addr;
+	uffdio_register.range.len = length;
+	uffdio_register.mode = UFFDIO_REGISTER_MODE_MISSING;
+	if (ioctl(uffd, UFFDIO_REGISTER, &uffdio_register) < 0) {
+		log_error("ioctl failed");
+		return (MAP_FAILED);
+	}
+	mmap_item_t *item = malloc(sizeof(mmap_item_t));
+	item->addr = (uint64_t)addr;
+	item->i_ino = fd_table[fd].i_ino;
+	item->chunk_size = fd_table[fd].chunk_size;
+	item->len = length;
+	item->size = &fd_table[fd].size;
+	item->offset = offset;
+	add_mmap_item(item);
+	return (addr);
 }

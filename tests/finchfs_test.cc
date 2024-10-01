@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <sys/mman.h>
 extern "C" {
 #include <finchfs.h>
 }
@@ -939,6 +940,22 @@ TEST(FinchfsTest, Getdents)
 	struct test_dirent *ent = (struct test_dirent *)buf;
 	EXPECT_STREQ(ent->d_name, "file1");
 	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Mmap1)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/mmap1", O_RDWR, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	char *text = "ABCDEFGH";
+	EXPECT_EQ(finchfs_write(fd, text, strlen(text) + 1), strlen(text) + 1);
+	char *addr;
+	addr = (char *)finchfs_mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+	EXPECT_NE(addr, MAP_FAILED);
+	EXPECT_STREQ(addr, text);
+	EXPECT_EQ(finchfs_close(fd), 0);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 

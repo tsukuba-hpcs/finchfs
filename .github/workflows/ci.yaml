@@ -41,6 +41,9 @@ jobs:
     - name: Build finchfs_test
       run: g++ tests/finchfs_test.cc `pkg-config --libs finchfs` -lgtest -o finchfs_test
 
+    - name: Enable unprivileged userfaultfd
+      run: sudo sh -c "echo 1 > /proc/sys/vm/unprivileged_userfaultfd"
+
     - name: Run finchfs_test
       run: LD_LIBRARY_PATH=/usr/local/lib ./finchfs_test
 
