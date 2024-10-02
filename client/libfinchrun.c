@@ -15,7 +15,7 @@ typedef long (*syscall_fn_t)(long, long, long, long, long, long, long);
 
 static syscall_fn_t next_sys_call = NULL;
 
-#define FINCH_FD_MASK (1 << 28)
+#define FINCH_FD_SHFT 28
 
 char *prefix = "/finchfs/";
 int prefix_len = 9;
@@ -26,8 +26,8 @@ hook_read(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = a2;
 	void *buf = a3;
 	size_t count = a4;
-	if (fd & FINCH_FD_MASK) {
-		return finchfs_read(fd ^ FINCH_FD_MASK, buf, count);
+	if ((fd >> FINCH_FD_SHFT) == 1) {
+		return finchfs_read(fd ^ (1 << FINCH_FD_SHFT), buf, count);
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -38,8 +38,8 @@ hook_write(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = a2;
 	void *buf = a3;
 	size_t count = a4;
-	if (fd & FINCH_FD_MASK) {
-		return finchfs_write(fd ^ FINCH_FD_MASK, buf, count);
+	if ((fd >> FINCH_FD_SHFT) == 1) {
+		return finchfs_write(fd ^ (1 << FINCH_FD_SHFT), buf, count);
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -59,7 +59,7 @@ hook_open(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 			ret = finchfs_open(pathname, flags);
 		}
 		if (ret >= 0) {
-			return ret | FINCH_FD_MASK;
+			return ret | (1 << FINCH_FD_SHFT);
 		}
 		return ret;
 	}
@@ -70,8 +70,8 @@ static long
 hook_close(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int fd = a2;
-	if (fd & FINCH_FD_MASK) {
-		return finchfs_close(fd ^ FINCH_FD_MASK);
+	if ((fd >> FINCH_FD_SHFT) == 1) {
+		return finchfs_close(fd ^ (1 << FINCH_FD_SHFT));
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -93,8 +93,8 @@ hook_fstat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int fd = (int)a2;
 	struct stat *buf = (struct stat *)a3;
-	if (fd & FINCH_FD_MASK) {
-		return finchfs_fstat(fd ^ FINCH_FD_MASK, buf);
+	if ((fd >> FINCH_FD_SHFT) == 1) {
+		return finchfs_fstat(fd ^ (1 << FINCH_FD_SHFT), buf);
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -117,8 +117,8 @@ hook_lseek(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = (int)a2;
 	off_t offset = (off_t)a3;
 	int whence = (int)a4;
-	if (fd & FINCH_FD_MASK) {
-		return finchfs_seek(fd ^ FINCH_FD_MASK, offset, whence);
+	if ((fd >> FINCH_FD_SHFT) == 1) {
+		return finchfs_seek(fd ^ (1 << FINCH_FD_SHFT), offset, whence);
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -130,8 +130,9 @@ hook_pread64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	void *buf = (void *)a3;
 	size_t count = (size_t)a4;
 	off_t offset = (off_t)a5;
-	if (fd & FINCH_FD_MASK) {
-		return finchfs_pread(fd, buf, count, offset);
+	if ((fd >> FINCH_FD_SHFT) == 1) {
+		return finchfs_pread(fd ^ (1 << FINCH_FD_SHFT), buf, count,
+				     offset);
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -143,8 +144,9 @@ hook_pwrite64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	void *buf = (void *)a3;
 	size_t count = (size_t)a4;
 	off_t offset = (off_t)a5;
-	if (fd & FINCH_FD_MASK) {
-		return finchfs_pwrite(fd, buf, count, offset);
+	if ((fd >> FINCH_FD_SHFT) == 1) {
+		return finchfs_pwrite(fd ^ (1 << FINCH_FD_SHFT), buf, count,
+				      offset);
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -194,8 +196,8 @@ static long
 hook_fsync(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int fd = (int)a2;
-	if (fd & FINCH_FD_MASK) {
-		return finchfs_fsync(fd ^ FINCH_FD_MASK);
+	if ((fd >> FINCH_FD_SHFT) == 1) {
+		return finchfs_fsync(fd ^ (1 << FINCH_FD_SHFT));
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -215,7 +217,7 @@ static long
 hook_ftruncate(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int fd = (int)a2;
-	if (fd & FINCH_FD_MASK) {
+	if ((fd >> FINCH_FD_SHFT) == 1) {
 		// FINCHFS doen't support truncate
 		return -EIO;
 	}
@@ -301,7 +303,7 @@ hook_openat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 			ret = finchfs_open(path, flags);
 		}
 		if (ret >= 0) {
-			return ret | FINCH_FD_MASK;
+			return ret | (1 << FINCH_FD_SHFT);
 		}
 		return ret;
 	}
