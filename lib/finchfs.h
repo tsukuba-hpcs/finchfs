@@ -39,6 +39,10 @@ int finchfs_createat_chunk_size(int dirfd, const char *pathname, int flags,
 int finchfs_openat(int dirfd, const char *pathname, int flags);
 int finchfs_fstatat(int dirfd, const char *pathname, struct stat *buf,
 		    int flags);
+int finchfs_mkdirat(int dirfd, const char *pathname, mode_t mode);
+int finchfs_unlinkat(int dirfd, const char *pathname, int flags);
+int finchfs_renameat(int olddirfd, const char *oldpath, int newdirfd,
+		     const char *newpath);
 ssize_t finchfs_getdents(int fd, void *dirp, size_t count);
 void *finchfs_mmap(void *addr, size_t length, int prot, int flags, int fd,
 		   off_t offset);

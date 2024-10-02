@@ -1,3 +1,4 @@
+#define _ATFILE_SOURCE
 #include <stdint.h>
 #include <ucp/api/ucp.h>
 #include <fcntl.h>
@@ -636,9 +637,8 @@ finchfs_unlink(const char *path)
 {
 	log_debug("finchfs_unlink() called path=%s", path);
 	int ret;
-	uint64_t i_ino;
 	char *p = canonical_path(path);
-	ret = fs_rpc_inode_unlink(p, &i_ino);
+	ret = fs_rpc_inode_unlink(NULL, p);
 	free(p);
 	return (ret);
 }
@@ -650,7 +650,7 @@ finchfs_mkdir(const char *path, mode_t mode)
 	int ret;
 	char *p = canonical_path(path);
 	mode |= S_IFDIR;
-	ret = fs_rpc_mkdir(p, mode);
+	ret = fs_rpc_mkdir(NULL, p, mode);
 	free(p);
 	return (ret);
 }
@@ -661,7 +661,7 @@ finchfs_rmdir(const char *path)
 	log_debug("finchfs_rmdir() called path=%s", path);
 	int ret;
 	char *p = canonical_path(path);
-	ret = fs_rpc_inode_unlink_all(p);
+	ret = fs_rpc_inode_unlink_all(NULL, p);
 	free(p);
 	return (ret);
 }
@@ -741,12 +741,12 @@ finchfs_rename(const char *oldpath, const char *newpath)
 		return (-1);
 	}
 	if (S_ISDIR(st.mode)) {
-		ret = fs_rpc_dir_rename(oldp, newp);
+		ret = fs_rpc_dir_rename(NULL, oldp, NULL, newp);
 		free(oldp);
 		free(newp);
 		return (ret);
 	} else {
-		ret = fs_rpc_file_rename(oldp, newp);
+		ret = fs_rpc_file_rename(NULL, oldp, NULL, newp);
 		free(oldp);
 		free(newp);
 		return (ret);
@@ -910,6 +910,86 @@ finchfs_fstatat(int dirfd, const char *pathname, struct stat *st, int flags)
 	st->st_blocks = NUM_BLOCKS(fst.size);
 	free(p);
 	return (0);
+}
+
+int
+finchfs_mkdirat(int dirfd, const char *pathname, mode_t mode)
+{
+	log_debug("finchfs_mkdirat() called dirfd=%d path=%s", dirfd, pathname);
+	if (dirfd < 0 || dirfd >= fd_table_size ||
+	    fd_table[dirfd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	int ret;
+	char *p = canonical_path(pathname);
+	mode |= S_IFDIR;
+	ret = fs_rpc_mkdir(fd_table[dirfd].eid, p, mode);
+	free(p);
+	return (ret);
+}
+
+int
+finchfs_unlinkat(int dirfd, const char *pathname, int flags)
+{
+	log_debug("finchfs_unlinkat() called dirfd=%d path=%s", dirfd,
+		  pathname);
+	if (dirfd < 0 || dirfd >= fd_table_size ||
+	    fd_table[dirfd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	int ret;
+	char *p = canonical_path(pathname);
+	if (flags & AT_REMOVEDIR) {
+		ret = fs_rpc_inode_unlink_all(fd_table[dirfd].eid, p);
+	} else {
+		ret = fs_rpc_inode_unlink(fd_table[dirfd].eid, p);
+	}
+	free(p);
+	return (ret);
+}
+
+int
+finchfs_renameat(int olddirfd, const char *oldpath, int newdirfd,
+		 const char *newpath)
+{
+	log_debug("finchfs_renameat() called olddirfd=%d oldpath=%s "
+		  "newdirfd=%d newpath=%s",
+		  olddirfd, oldpath, newdirfd, newpath);
+	if (olddirfd < 0 || olddirfd >= fd_table_size ||
+	    fd_table[olddirfd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	if (newdirfd < 0 || newdirfd >= fd_table_size ||
+	    fd_table[newdirfd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	}
+	int ret;
+	char *oldp = canonical_path(oldpath);
+	char *newp = canonical_path(newpath);
+	fs_stat_t st;
+	ret = fs_rpc_inode_stat(fd_table[olddirfd].eid, oldp, &st, 0);
+	if (ret) {
+		free(oldp);
+		free(newp);
+		return (-1);
+	}
+	if (S_ISDIR(st.mode)) {
+		ret = fs_rpc_dir_rename(fd_table[olddirfd].eid, oldp,
+					fd_table[newdirfd].eid, newp);
+		free(oldp);
+		free(newp);
+		return (ret);
+	} else {
+		ret = fs_rpc_file_rename(fd_table[olddirfd].eid, oldp,
+					 fd_table[newdirfd].eid, newp);
+		free(oldp);
+		free(newp);
+		return (ret);
+	}
 }
 
 ssize_t

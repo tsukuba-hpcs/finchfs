@@ -249,8 +249,15 @@ ucs_status_t
 fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 		  void *data, size_t length, const ucp_am_recv_param_t *param)
 {
-	char *path = (char *)data;
-	mode_t mode = *(mode_t *)UCS_PTR_BYTE_OFFSET(data, strlen(path) + 1);
+	uint64_t base;
+	mode_t mode;
+	char *path;
+	char *p = (char *)data;
+	base = *(uint64_t *)p;
+	p += sizeof(base);
+	mode = *(mode_t *)p;
+	p += sizeof(mode);
+	path = (char *)p;
 
 	log_debug("fs_rpc_mkdir_recv() called path=%s", path);
 
@@ -262,7 +269,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[0].length = sizeof(int);
 
 	char dirname[128];
-	entry_t *parent = get_parent_and_filename(0, dirname, path, &ctx);
+	entry_t *parent = get_parent_and_filename(base, dirname, path, &ctx);
 
 	if (parent == NULL) {
 		log_debug("fs_rpc_mkdir_recv() parent path=%s does not exist",
@@ -393,7 +400,12 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 			 void *data, size_t length,
 			 const ucp_am_recv_param_t *param)
 {
-	char *path = (char *)data;
+	uint64_t base;
+	char *path;
+	char *p = (char *)data;
+	base = *(uint64_t *)p;
+	p += sizeof(base);
+	path = (char *)p;
 
 	log_debug("fs_rpc_inode_unlink_recv() called path=%s", path);
 
@@ -401,14 +413,12 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
 	user_data->header = malloc(header_length);
 	memcpy(user_data->header, header, header_length);
-	user_data->n = 2;
+	user_data->n = 1;
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
-	user_data->iov[1].buffer = malloc(sizeof(uint64_t));
-	user_data->iov[1].length = sizeof(uint64_t);
 
 	char name[128];
-	entry_t *parent = get_parent_and_filename(0, name, path, &ctx);
+	entry_t *parent = get_parent_and_filename(base, name, path, &ctx);
 	if (parent == NULL) {
 		log_debug("fs_rpc_inode_unlink_recv() path=%s does not exist",
 			  path);
@@ -424,7 +434,6 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 			    path);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 		} else {
-			*(uint64_t *)user_data->iov[1].buffer = ent->i_ino;
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 			free_meta_tree(ent);
 			RB_REMOVE(entrytree, &parent->entries, ent);
@@ -439,7 +448,7 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 	}
 
 	ucs_status_t status;
-	status = post_iov_req(param->reply_ep, RPC_INODE_REP, user_data,
+	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
 			      header_length);
 	return (status);
 }
@@ -863,8 +872,18 @@ ucs_status_t
 fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 		   void *data, size_t length, const ucp_am_recv_param_t *param)
 {
-	char *opath = (char *)data;
-	char *npath = (char *)UCS_PTR_BYTE_OFFSET(data, strlen(opath) + 1);
+	uint64_t oldbase;
+	char *opath;
+	uint64_t newbase;
+	char *npath;
+	char *p = (char *)data;
+	oldbase = *(uint64_t *)p;
+	p += sizeof(uint64_t);
+	opath = (char *)p;
+	p += strlen(opath) + 1;
+	newbase = *(uint64_t *)p;
+	p += sizeof(uint64_t);
+	npath = (char *)p;
 
 	log_debug("fs_rpc_dir_move_recv() called opath=%s npath=%s", opath,
 		  npath);
@@ -878,8 +897,8 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 
 	char oname[128];
 	char nname[128];
-	entry_t *oparent = get_parent_and_filename(0, oname, opath, &ctx);
-	entry_t *nparent = get_parent_and_filename(0, nname, npath, &ctx);
+	entry_t *oparent = get_parent_and_filename(oldbase, oname, opath, &ctx);
+	entry_t *nparent = get_parent_and_filename(newbase, nname, npath, &ctx);
 
 	if (oparent == NULL) {
 		log_debug("fs_rpc_dir_move_recv() opath=%s does not exist",

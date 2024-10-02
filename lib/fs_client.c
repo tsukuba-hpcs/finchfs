@@ -627,20 +627,21 @@ path_to_target_hash(const char *path, int div)
 }
 
 int
-fs_rpc_mkdir(const char *path, mode_t mode)
+fs_rpc_mkdir(uint64_t *base, const char *path, mode_t mode)
 {
-	ucp_dt_iov_t iov[2];
-	iov[0].buffer = (void *)path;
-	iov[0].length = strlen(path) + 1;
-	iov[1].buffer = &mode;
-	iov[1].length = sizeof(mode);
-
+	ucp_dt_iov_t *iov = malloc(sizeof(ucp_dt_iov_t) * 3 * env.nvprocs);
+	uint64_t zero = 0;
 	int *ret = malloc(sizeof(int) * env.nvprocs);
-	for (int i = 0; i < env.nvprocs; i++) {
-		ret[i] = FINCH_INPROGRESS;
-	}
 	int **rets_addr = malloc(sizeof(int *) * env.nvprocs);
+
 	for (int i = 0; i < env.nvprocs; i++) {
+		iov[i * 3].buffer = (base == NULL) ? &zero : &base[i];
+		iov[i * 3].length = sizeof(uint64_t);
+		iov[i * 3 + 1].buffer = &mode;
+		iov[i * 3 + 1].length = sizeof(mode);
+		iov[i * 3 + 2].buffer = (void *)path;
+		iov[i * 3 + 2].length = strlen(path) + 1;
+		ret[i] = FINCH_INPROGRESS;
 		rets_addr[i] = &ret[i];
 	}
 
@@ -654,14 +655,15 @@ fs_rpc_mkdir(const char *path, mode_t mode)
 	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_MKDIR_REQ,
-					  &rets_addr[i], sizeof(void *), iov, 2,
-					  &rparam);
+					  &rets_addr[i], sizeof(void *),
+					  &iov[i * 3], 3, &rparam);
 	}
 
 	ucs_status_t status;
 	while (!all_req_finish(reqs, env.nvprocs)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
+	free(iov);
 	int nokreq = 0;
 	int *okidx = malloc(sizeof(int) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
@@ -785,18 +787,18 @@ fs_rpc_inode_create(uint64_t *base, const char *path, uint8_t flags,
 }
 
 int
-fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
+fs_rpc_inode_unlink(uint64_t *base, const char *path)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
-	ucp_dt_iov_t iov[1];
-	iov[0].buffer = (void *)path;
-	iov[0].length = strlen(path) + 1;
+	ucp_dt_iov_t iov[2];
+	uint64_t zero = 0;
+	iov[0].buffer = base == NULL ? &zero : &base[target];
+	iov[0].length = sizeof(uint64_t);
+	iov[1].buffer = (void *)path;
+	iov[1].length = strlen(path) + 1;
 
-	inode_create_handle_t handle;
-	handle.ret = FINCH_INPROGRESS;
-	handle.i_ino = 0;
-	void *handle_addr = &handle;
-	int *ret_addr = &handle.ret;
+	int ret = FINCH_INPROGRESS;
+	int *ret_addr = &ret;
 
 	ucp_request_param_t rparam = {
 	    .op_attr_mask =
@@ -806,9 +808,8 @@ fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
 	};
 
 	ucs_status_ptr_t req;
-	req =
-	    ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_UNLINK_REQ,
-			    &handle_addr, sizeof(handle_addr), iov, 1, &rparam);
+	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_INODE_UNLINK_REQ,
+			      &ret_addr, sizeof(ret_addr), iov, 2, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
@@ -829,27 +830,29 @@ fs_rpc_inode_unlink(const char *path, uint64_t *i_ino)
 	while (!all_ret_finish(&ret_addr, 1)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
-	if (handle.ret != FINCH_OK) {
+	if (ret != FINCH_OK) {
 		log_error("fs_rpc_inode_unlink: unlink() failed: %s",
-			  strerror(-handle.ret));
-		errno = -handle.ret;
+			  strerror(-ret));
+		errno = -ret;
 		return (-1);
 	}
-	log_debug("fs_rpc_inode_unlink: succeeded ino=%d", handle.i_ino);
-	*i_ino = handle.i_ino;
+	log_debug("fs_rpc_inode_unlink: succeeded");
 	return (0);
 }
 
 int
-fs_rpc_inode_unlink_all(const char *path)
+fs_rpc_inode_unlink_all(uint64_t *base, const char *path)
 {
-	ucp_dt_iov_t iov[1];
-	iov[0].buffer = (void *)path;
-	iov[0].length = strlen(path) + 1;
+	ucp_dt_iov_t *iov = malloc(sizeof(ucp_dt_iov_t) * 2 * env.nvprocs);
+	uint64_t zero = 0;
 
 	inode_create_handle_t **handles =
 	    malloc(sizeof(inode_create_handle_t *) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
+		iov[i * 2].buffer = (base == NULL) ? &zero : &base[i];
+		iov[i * 2].length = sizeof(uint64_t);
+		iov[i * 2 + 1].buffer = (void *)path;
+		iov[i * 2 + 1].length = strlen(path) + 1;
 		handles[i] = malloc(sizeof(inode_create_handle_t));
 		handles[i]->ret = FINCH_INPROGRESS;
 		handles[i]->i_ino = 0;
@@ -865,12 +868,13 @@ fs_rpc_inode_unlink_all(const char *path)
 	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_INODE_UNLINK_REQ,
-					  &handles[i], sizeof(handles[i]), iov,
-					  1, &rparam);
+					  &handles[i], sizeof(handles[i]),
+					  &iov[i * 2], 2, &rparam);
 	}
 	while (!all_req_finish(reqs, env.nvprocs)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
+	free(iov);
 	int nokreq = 0;
 	int *okidx = malloc(sizeof(int) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
@@ -1551,20 +1555,24 @@ fs_rpc_readdir(const char *path, void *arg,
 }
 
 int
-fs_rpc_dir_rename(const char *oldpath, const char *newpath)
+fs_rpc_dir_rename(uint64_t *oldbase, const char *oldpath, uint64_t *newbase,
+		  const char *newpath)
 {
-	ucp_dt_iov_t iov[2];
-	iov[0].buffer = (void *)oldpath;
-	iov[0].length = strlen(oldpath) + 1;
-	iov[1].buffer = (void *)newpath;
-	iov[1].length = strlen(newpath) + 1;
-
+	ucp_dt_iov_t *iov = malloc(sizeof(ucp_dt_iov_t) * 4 * env.nvprocs);
+	uint64_t zero = 0;
 	int *ret = malloc(sizeof(int) * env.nvprocs);
-	for (int i = 0; i < env.nvprocs; i++) {
-		ret[i] = FINCH_INPROGRESS;
-	}
 	int **rets_addr = malloc(sizeof(int *) * env.nvprocs);
+
 	for (int i = 0; i < env.nvprocs; i++) {
+		iov[i * 4].buffer = (oldbase == NULL) ? &zero : &oldbase[i];
+		iov[i * 4].length = sizeof(uint64_t);
+		iov[i * 4 + 1].buffer = (void *)oldpath;
+		iov[i * 4 + 1].length = strlen(oldpath) + 1;
+		iov[i * 4 + 2].buffer = (newbase == NULL) ? &zero : &newbase[i];
+		iov[i * 4 + 2].length = sizeof(uint64_t);
+		iov[i * 4 + 3].buffer = (void *)newpath;
+		iov[i * 4 + 3].length = strlen(newpath) + 1;
+		ret[i] = FINCH_INPROGRESS;
 		rets_addr[i] = &ret[i];
 	}
 
@@ -1578,14 +1586,15 @@ fs_rpc_dir_rename(const char *oldpath, const char *newpath)
 	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_RENAME_REQ,
-					  &rets_addr[i], sizeof(void *), iov, 2,
-					  &rparam);
+					  &rets_addr[i], sizeof(void *),
+					  &iov[i * 4], 4, &rparam);
 	}
 
 	ucs_status_t status;
 	while (!all_req_finish(reqs, env.nvprocs)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
+	free(iov);
 	int nokreq = 0;
 	int *okidx = malloc(sizeof(int) * env.nvprocs);
 	for (int i = 0; i < env.nvprocs; i++) {
@@ -1639,7 +1648,8 @@ fs_rpc_dir_rename(const char *oldpath, const char *newpath)
 }
 
 int
-fs_rpc_file_rename(const char *oldpath, const char *newpath)
+fs_rpc_file_rename(uint64_t *oldbase, const char *oldpath, uint64_t *newbase,
+		   const char *newpath)
 {
 	int otarget = path_to_target_hash(oldpath, env.nvprocs);
 	int ntarget = path_to_target_hash(newpath, env.nvprocs);
@@ -1647,11 +1657,16 @@ fs_rpc_file_rename(const char *oldpath, const char *newpath)
 		errno = ENOTSUP;
 		return (-1);
 	}
-	ucp_dt_iov_t iov[2];
-	iov[0].buffer = (void *)oldpath;
-	iov[0].length = strlen(oldpath) + 1;
-	iov[1].buffer = (void *)newpath;
-	iov[1].length = strlen(newpath) + 1;
+	ucp_dt_iov_t iov[4];
+	uint64_t zero = 0;
+	iov[0].buffer = (oldbase == NULL) ? &zero : &oldbase[otarget];
+	iov[0].length = sizeof(uint64_t);
+	iov[1].buffer = (void *)oldpath;
+	iov[1].length = strlen(oldpath) + 1;
+	iov[2].buffer = (newbase == NULL) ? &zero : &newbase[ntarget];
+	iov[2].length = sizeof(uint64_t);
+	iov[3].buffer = (void *)newpath;
+	iov[3].length = strlen(newpath) + 1;
 
 	int ret = FINCH_INPROGRESS;
 	int *ret_addr = &ret;
@@ -1665,7 +1680,7 @@ fs_rpc_file_rename(const char *oldpath, const char *newpath)
 
 	ucs_status_ptr_t req;
 	req = ucp_am_send_nbx(env.ucp_eps[otarget], RPC_RENAME_REQ, &ret_addr,
-			      sizeof(void *), iov, 2, &rparam);
+			      sizeof(void *), iov, 4, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {

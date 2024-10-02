@@ -912,7 +912,7 @@ TEST(FinchfsTest, Openat)
 TEST(FinchfsTest, Fstatat)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
-	int dirfd, fd;
+	int dirfd;
 	dirfd = finchfs_open("/createat", O_RDWR | O_DIRECTORY);
 	EXPECT_EQ(dirfd, 0);
 	struct stat st;
@@ -940,6 +940,79 @@ TEST(FinchfsTest, Getdents)
 	struct test_dirent *ent = (struct test_dirent *)buf;
 	EXPECT_STREQ(ent->d_name, "file1");
 	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Mkdirat)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int dirfd;
+	dirfd = finchfs_open("/createat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	EXPECT_EQ(finchfs_mkdirat(dirfd, "mkdirat", 0777), 0);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	struct stat st;
+	EXPECT_EQ(finchfs_stat("/createat/mkdirat", &st), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Unlinkat1)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int dirfd;
+	dirfd = finchfs_open("/createat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	EXPECT_EQ(finchfs_unlinkat(dirfd, "file1", 0), 0);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	struct stat st;
+	EXPECT_EQ(finchfs_stat("/createat/file1", &st), -1);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Unlinkat2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int dirfd;
+	dirfd = finchfs_open("/createat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	EXPECT_EQ(finchfs_unlinkat(dirfd, "mkdirat", AT_REMOVEDIR), 0);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	struct stat st;
+	EXPECT_EQ(finchfs_stat("/createat/mkdirat", &st), -1);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Renameat1)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/renameat", 0777), 0);
+	EXPECT_EQ(finchfs_mkdir("/renameat/childdir", 0777), 0);
+	int dirfd;
+	dirfd = finchfs_open("/renameat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	EXPECT_EQ(finchfs_renameat(dirfd, "childdir", dirfd, "childdir2"), 0);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	struct stat st;
+	EXPECT_EQ(finchfs_stat("/renameat/childdir", &st), -1);
+	EXPECT_EQ(finchfs_stat("/renameat/childdir2", &st), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Renameat2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/renameat/childfile", O_RDONLY, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	int dirfd;
+	dirfd = finchfs_open("/renameat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	EXPECT_EQ(finchfs_renameat(dirfd, "childfile", dirfd, "childfile2"), 0);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	struct stat st;
+	EXPECT_EQ(finchfs_stat("/renameat/childfile", &st), -1);
+	EXPECT_EQ(finchfs_stat("/renameat/childfile2", &st), 0);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
