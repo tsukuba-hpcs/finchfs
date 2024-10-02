@@ -382,7 +382,22 @@ hook_renameat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		    olddirfd ^ (1 << FINCH_FD_SHIFT), oldpath,
 		    newdirfd ^ (1 << FINCH_FD_SHIFT), newpath);
 	}
-	if (strncmp(oldpath, prefix, prefix_len) == 0 ||
+	if (strncmp(oldpath, prefix, prefix_len) == 0 &&
+	    (newdirfd >> FINCH_FD_SHIFT) == 1) {
+		oldpath += prefix_len;
+		return finchfs_renameat(olddirfd, oldpath,
+					newdirfd ^ (1 << FINCH_FD_SHIFT),
+					newpath);
+	}
+	if ((olddirfd >> FINCH_FD_SHIFT) == 1 &&
+	    strncmp(newpath, prefix, prefix_len) == 0) {
+		newpath += prefix_len;
+		return finchfs_renameat(olddirfd ^ (1 << FINCH_FD_SHIFT),
+					oldpath, newdirfd, newpath);
+	}
+	if ((olddirfd >> FINCH_FD_SHIFT) == 1 ||
+	    (newdirfd >> FINCH_FD_SHIFT) == 1 ||
+	    strncmp(oldpath, prefix, prefix_len) == 0 ||
 	    strncmp(newpath, prefix, prefix_len) == 0) {
 		return -EIO;
 	}
