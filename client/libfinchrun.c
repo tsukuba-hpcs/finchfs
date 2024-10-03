@@ -190,26 +190,19 @@ static long
 hook_clone(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	long ret;
-	finchfs_term();
 	ret = next_sys_call(a1, a2, a3, a4, a5, a6, a7);
-	if ((ret = finchfs_init(NULL))) {
-		fprintf(stderr, "finchfs_init failed at %s\n", strerror(errno));
-		exit(-1);
-	}
 	return ret;
 }
 
 static long
 hook_execve(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
-	finchfs_term();
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
 
 static long
 hook_exit(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
-	finchfs_term();
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
 
