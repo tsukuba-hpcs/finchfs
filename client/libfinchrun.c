@@ -27,8 +27,10 @@ hook_read(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = a2;
 	void *buf = a3;
 	size_t count = a4;
+	ssize_t ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_read(fd ^ (1 << FINCH_FD_SHIFT), buf, count);
+		ret = finchfs_read(fd ^ (1 << FINCH_FD_SHIFT), buf, count);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -39,8 +41,10 @@ hook_write(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = a2;
 	void *buf = a3;
 	size_t count = a4;
+	ssize_t ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_write(fd ^ (1 << FINCH_FD_SHIFT), buf, count);
+		ret = finchfs_write(fd ^ (1 << FINCH_FD_SHIFT), buf, count);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -62,7 +66,7 @@ hook_open(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		if (ret >= 0) {
 			return ret | (1 << FINCH_FD_SHIFT);
 		}
-		return ret;
+		return -errno;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -71,8 +75,10 @@ static long
 hook_close(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int fd = a2;
+	int ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_close(fd ^ (1 << FINCH_FD_SHIFT));
+		ret = finchfs_close(fd ^ (1 << FINCH_FD_SHIFT));
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -82,9 +88,11 @@ hook_stat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	char *path = (char *)a2;
 	struct stat *buf = (struct stat *)a3;
+	int ret;
 	if (strncmp(path, prefix, prefix_len) == 0) {
 		path += prefix_len;
-		return finchfs_stat(path, buf);
+		ret = finchfs_stat(path, buf);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -94,8 +102,10 @@ hook_fstat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int fd = (int)a2;
 	struct stat *buf = (struct stat *)a3;
+	int ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_fstat(fd ^ (1 << FINCH_FD_SHIFT), buf);
+		ret = finchfs_fstat(fd ^ (1 << FINCH_FD_SHIFT), buf);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -105,9 +115,11 @@ hook_lstat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	char *path = (char *)a2;
 	struct stat *buf = (struct stat *)a3;
+	int ret;
 	if (strncmp(path, prefix, prefix_len) == 0) {
 		path += prefix_len;
-		return finchfs_stat(path, buf);
+		ret = finchfs_stat(path, buf);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -118,8 +130,10 @@ hook_lseek(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = (int)a2;
 	off_t offset = (off_t)a3;
 	int whence = (int)a4;
+	off_t ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_seek(fd ^ (1 << FINCH_FD_SHIFT), offset, whence);
+		ret = finchfs_seek(fd ^ (1 << FINCH_FD_SHIFT), offset, whence);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -131,9 +145,11 @@ hook_pread64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	void *buf = (void *)a3;
 	size_t count = (size_t)a4;
 	off_t offset = (off_t)a5;
+	ssize_t ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_pread(fd ^ (1 << FINCH_FD_SHIFT), buf, count,
-				     offset);
+		ret = finchfs_pread(fd ^ (1 << FINCH_FD_SHIFT), buf, count,
+				    offset);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -145,9 +161,11 @@ hook_pwrite64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	void *buf = (void *)a3;
 	size_t count = (size_t)a4;
 	off_t offset = (off_t)a5;
+	ssize_t ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_pwrite(fd ^ (1 << FINCH_FD_SHIFT), buf, count,
-				      offset);
+		ret = finchfs_pwrite(fd ^ (1 << FINCH_FD_SHIFT), buf, count,
+				     offset);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -157,11 +175,13 @@ hook_access(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	char *path = (char *)a2;
 	int mode = (int)a3;
+	int ret;
 	if (strncmp(path, prefix, prefix_len) == 0) {
 		struct stat st;
 		int ret;
 		path += prefix_len;
-		return finchfs_stat(path, &st);
+		ret = finchfs_stat(path, &st);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -197,8 +217,10 @@ static long
 hook_fsync(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int fd = (int)a2;
+	int ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_fsync(fd ^ (1 << FINCH_FD_SHIFT));
+		ret = finchfs_fsync(fd ^ (1 << FINCH_FD_SHIFT));
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -231,9 +253,10 @@ hook_getdents(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	unsigned int fd = (unsigned int)a2;
 	void *dirp = (void *)a3;
 	unsigned int count = (unsigned int)a4;
+	ssize_t ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_getdents(fd ^ (1 << FINCH_FD_SHIFT), dirp,
-					count);
+		ret = finchfs_getdents(fd ^ (1 << FINCH_FD_SHIFT), dirp, count);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -243,11 +266,13 @@ hook_rename(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	char *oldpath = (char *)a2;
 	char *newpath = (char *)a3;
+	int ret;
 	if (strncmp(oldpath, prefix, prefix_len) == 0 &&
 	    strncmp(newpath, prefix, prefix_len) == 0) {
 		oldpath += prefix_len;
 		newpath += prefix_len;
-		return finchfs_rename(oldpath, newpath);
+		ret = finchfs_rename(oldpath, newpath);
+		return ret < 0 ? -errno : ret;
 	}
 	if (strncmp(oldpath, prefix, prefix_len) != 0 &&
 	    strncmp(newpath, prefix, prefix_len) != 0) {
@@ -261,9 +286,11 @@ hook_mkdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	char *path = (char *)a2;
 	mode_t mode = (mode_t)a3;
+	int ret;
 	if (strncmp(path, prefix, prefix_len) == 0) {
 		path += prefix_len;
-		return finchfs_mkdir(path, mode);
+		ret = finchfs_mkdir(path, mode);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -272,9 +299,11 @@ static long
 hook_rmdir(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	char *path = (char *)a2;
+	int ret;
 	if (strncmp(path, prefix, prefix_len) == 0) {
 		path += prefix_len;
-		return finchfs_rmdir(path);
+		ret = finchfs_rmdir(path);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -284,9 +313,11 @@ hook_creat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	char *path = (char *)a2;
 	mode_t mode = (mode_t)a3;
+	int ret;
 	if (strncmp(path, prefix, prefix_len) == 0) {
 		path += prefix_len;
-		return finchfs_create(path, O_CREAT | O_WRONLY | O_TRUNC, mode);
+		ret = finchfs_create(path, O_CREAT | O_WRONLY | O_TRUNC, mode);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -308,9 +339,10 @@ hook_getdents64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int fd = (int)a2;
 	void *dirp = (void *)a3;
 	size_t count = (size_t)a4;
+	ssize_t ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_getdents(fd ^ (1 << FINCH_FD_SHIFT), dirp,
-					count);
+		ret = finchfs_getdents(fd ^ (1 << FINCH_FD_SHIFT), dirp, count);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -333,7 +365,7 @@ hook_openat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		if (ret >= 0) {
 			return ret | (1 << FINCH_FD_SHIFT);
 		}
-		return ret;
+		return -errno;
 	}
 	if ((dirfd >> FINCH_FD_SHIFT) == 1) {
 		int ret;
@@ -347,7 +379,7 @@ hook_openat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		if (ret >= 0) {
 			return ret | (1 << FINCH_FD_SHIFT);
 		}
-		return ret;
+		return -errno;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -358,13 +390,16 @@ hook_mkdirat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int dirfd = (int)a2;
 	char *path = (char *)a3;
 	mode_t mode = (mode_t)a4;
+	int ret;
 	if (strncmp(path, prefix, prefix_len) == 0) {
 		path += prefix_len;
-		return finchfs_mkdir(path, mode);
+		ret = finchfs_mkdir(path, mode);
+		return ret < 0 ? -errno : ret;
 	}
 	if ((dirfd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_mkdirat(dirfd ^ (1 << FINCH_FD_SHIFT), path,
-				       mode);
+		ret =
+		    finchfs_mkdirat(dirfd ^ (1 << FINCH_FD_SHIFT), path, mode);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -376,13 +411,16 @@ hook_newfstatat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	char *pathname = (char *)a3;
 	struct stat *st = (struct stat *)a4;
 	int flags = (int)a5;
+	int ret;
 	if (strncmp(pathname, prefix, prefix_len) == 0) {
 		pathname += prefix_len;
-		return finchfs_stat(pathname, st);
+		ret = finchfs_stat(pathname, st);
+		return ret < 0 ? -errno : ret;
 	}
 	if ((dirfd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_fstatat(dirfd ^ (1 << FINCH_FD_SHIFT), pathname,
-				       st, flags);
+		ret = finchfs_fstatat(dirfd ^ (1 << FINCH_FD_SHIFT), pathname,
+				      st, flags);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -393,17 +431,20 @@ hook_unlinkat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	int dirfd = (int)a2;
 	char *path = (char *)a3;
 	int flags = (int)a4;
+	int ret;
 	if (strncmp(path, prefix, prefix_len) == 0) {
 		path += prefix_len;
 		if (flags & AT_REMOVEDIR) {
-			return finchfs_rmdir(path);
+			ret = finchfs_rmdir(path);
 		} else {
-			return finchfs_unlink(path);
+			ret = finchfs_unlink(path);
 		}
+		return ret < 0 ? -errno : ret;
 	}
 	if ((dirfd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_unlinkat(dirfd ^ (1 << FINCH_FD_SHIFT), path,
-					flags);
+		ret = finchfs_unlinkat(dirfd ^ (1 << FINCH_FD_SHIFT), path,
+				       flags);
+		return ret < 0 ? -errno : ret;
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -415,30 +456,35 @@ hook_renameat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	char *oldpath = (char *)a3;
 	int newdirfd = (int)a4;
 	char *newpath = (char *)a5;
+	int ret;
 	if (strncmp(oldpath, prefix, prefix_len) == 0 &&
 	    strncmp(newpath, prefix, prefix_len) == 0) {
 		oldpath += prefix_len;
 		newpath += prefix_len;
-		return finchfs_rename(oldpath, newpath);
+		ret = finchfs_rename(oldpath, newpath);
+		return ret < 0 ? -errno : ret;
 	}
 	if ((olddirfd >> FINCH_FD_SHIFT) == 1 &&
 	    (newdirfd >> FINCH_FD_SHIFT) == 1) {
-		return finchfs_renameat(
-		    olddirfd ^ (1 << FINCH_FD_SHIFT), oldpath,
-		    newdirfd ^ (1 << FINCH_FD_SHIFT), newpath);
+		ret =
+		    finchfs_renameat(olddirfd ^ (1 << FINCH_FD_SHIFT), oldpath,
+				     newdirfd ^ (1 << FINCH_FD_SHIFT), newpath);
+		return ret < 0 ? -errno : ret;
 	}
 	if (strncmp(oldpath, prefix, prefix_len) == 0 &&
 	    (newdirfd >> FINCH_FD_SHIFT) == 1) {
 		oldpath += prefix_len;
-		return finchfs_renameat(olddirfd, oldpath,
-					newdirfd ^ (1 << FINCH_FD_SHIFT),
-					newpath);
+		ret =
+		    finchfs_renameat(olddirfd, oldpath,
+				     newdirfd ^ (1 << FINCH_FD_SHIFT), newpath);
+		return ret < 0 ? -errno : ret;
 	}
 	if ((olddirfd >> FINCH_FD_SHIFT) == 1 &&
 	    strncmp(newpath, prefix, prefix_len) == 0) {
 		newpath += prefix_len;
-		return finchfs_renameat(olddirfd ^ (1 << FINCH_FD_SHIFT),
-					oldpath, newdirfd, newpath);
+		ret = finchfs_renameat(olddirfd ^ (1 << FINCH_FD_SHIFT),
+				       oldpath, newdirfd, newpath);
+		return ret < 0 ? -errno : ret;
 	}
 	if ((olddirfd >> FINCH_FD_SHIFT) == 1 ||
 	    (newdirfd >> FINCH_FD_SHIFT) == 1 ||
@@ -454,11 +500,10 @@ hook_statx(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int dirfd = (int)a2;
 	char *pathname = (char *)a3;
-	fprintf(stderr, "hook statx pathname=%s\n", pathname);
 	int flags = (int)a4;
 	unsigned int mask = (unsigned int)a5;
 	struct statx *stx = (struct statx *)a6;
-	if (strncmp(pathname, prefix, prefix_len)) {
+	if (strncmp(pathname, prefix, prefix_len) == 0) {
 		pathname += prefix_len;
 		struct stat st;
 		int ret = finchfs_stat(pathname, &st);
