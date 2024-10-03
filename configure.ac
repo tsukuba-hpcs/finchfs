@@ -1,7 +1,7 @@
 #                                               -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 AC_PREREQ([2.69])
-AC_INIT([FINCHFS], [0.0.14])
+AC_INIT([FINCHFS], [0.0.15])
 AM_INIT_AUTOMAKE([-Wall -Werror foreign])
 AC_CONFIG_SRCDIR([README.md])
 AC_CONFIG_HEADERS([lib/config.h])
