@@ -1159,8 +1159,8 @@ struct finchfs_dirent {
 	unsigned long d_ino;
 	unsigned long d_off;
 	unsigned short d_reclen;
-	char d_name[128];
-	char d_type;
+	char pad;
+	char d_name[];
 };
 
 ucs_status_t
@@ -1204,18 +1204,21 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 			continue;
 		}
 		ent = (struct finchfs_dirent *)(user_data->buf + rhdr->count);
-		if (rhdr->count + sizeof(struct finchfs_dirent) > hdr->count) {
+		if (rhdr->count + sizeof(struct finchfs_dirent) +
+			strlen(child->name) + 1 >
+		    hdr->count) {
 			rhdr->ret = FINCH_INPROGRESS;
 			rhdr->pos = (uint64_t)child;
 			break;
 		}
 		rhdr->ret = FINCH_OK;
-		rhdr->count += sizeof(struct finchfs_dirent);
+		rhdr->count +=
+		    sizeof(struct finchfs_dirent) + strlen(child->name) + 1;
 		ent->d_ino = child->i_ino;
 		ent->d_off = rhdr->count;
-		ent->d_reclen = sizeof(struct finchfs_dirent);
+		ent->d_reclen =
+		    sizeof(struct finchfs_dirent) + strlen(child->name) + 1;
 		strcpy(ent->d_name, child->name);
-		ent->d_type = S_ISDIR(child->mode) ? DT_DIR : DT_REG;
 	}
 	if (ent != NULL) {
 		ent->d_off = 0;
