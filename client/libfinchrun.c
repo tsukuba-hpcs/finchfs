@@ -1,4 +1,5 @@
 #define _ATFILE_SOURCE
+#define _GNU_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,8 +18,8 @@ static syscall_fn_t next_sys_call = NULL;
 
 #define FINCH_FD_SHIFT 28
 
-char *prefix = "/finchfs/";
-int prefix_len = 9;
+char *prefix = "/finchfs";
+int prefix_len = 8;
 
 static long
 hook_read(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
@@ -225,6 +226,19 @@ hook_ftruncate(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 }
 
 static long
+hook_getdents(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	unsigned int fd = (unsigned int)a2;
+	void *dirp = (void *)a3;
+	unsigned int count = (unsigned int)a4;
+	if ((fd >> FINCH_FD_SHIFT) == 1) {
+		return finchfs_getdents(fd ^ (1 << FINCH_FD_SHIFT), dirp,
+					count);
+	}
+	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
+}
+
+static long
 hook_rename(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	char *oldpath = (char *)a2;
@@ -284,6 +298,19 @@ hook_unlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	if (strncmp(path, prefix, prefix_len) == 0) {
 		path += prefix_len;
 		return finchfs_unlink(path);
+	}
+	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
+}
+
+static long
+hook_getdents64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	int fd = (int)a2;
+	void *dirp = (void *)a3;
+	size_t count = (size_t)a4;
+	if ((fd >> FINCH_FD_SHIFT) == 1) {
+		return finchfs_getdents(fd ^ (1 << FINCH_FD_SHIFT), dirp,
+					count);
 	}
 	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
 }
@@ -405,6 +432,58 @@ hook_renameat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 }
 
 static long
+hook_statx(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	int dirfd = (int)a2;
+	char *pathname = (char *)a3;
+	fprintf(stderr, "hook statx pathname=%s\n", pathname);
+	int flags = (int)a4;
+	unsigned int mask = (unsigned int)a5;
+	struct statx *stx = (struct statx *)a6;
+	if (strncmp(pathname, prefix, prefix_len)) {
+		pathname += prefix_len;
+		struct stat st;
+		int ret = finchfs_stat(pathname, &st);
+		if (ret < 0)
+			return (-errno);
+		stx->stx_dev_major = st.st_dev;
+		stx->stx_ino = st.st_ino;
+		stx->stx_mode = st.st_mode;
+		stx->stx_nlink = st.st_nlink;
+		stx->stx_uid = st.st_uid;
+		stx->stx_gid = st.st_gid;
+		stx->stx_rdev_major = st.st_rdev;
+		stx->stx_size = st.st_size;
+		stx->stx_blksize = st.st_blksize;
+		stx->stx_atime.tv_sec = st.st_atime;
+		stx->stx_mtime.tv_sec = st.st_mtime;
+		stx->stx_ctime.tv_sec = st.st_ctime;
+		return (0);
+	}
+	if ((dirfd >> FINCH_FD_SHIFT) == 1) {
+		struct stat st;
+		int ret = finchfs_fstatat(dirfd ^ (1 << FINCH_FD_SHIFT),
+					  pathname, &st, flags);
+		if (ret < 0)
+			return (-errno);
+		stx->stx_dev_major = st.st_dev;
+		stx->stx_ino = st.st_ino;
+		stx->stx_mode = st.st_mode;
+		stx->stx_nlink = st.st_nlink;
+		stx->stx_uid = st.st_uid;
+		stx->stx_gid = st.st_gid;
+		stx->stx_rdev_major = st.st_rdev;
+		stx->stx_size = st.st_size;
+		stx->stx_blksize = st.st_blksize;
+		stx->stx_atime.tv_sec = st.st_atime;
+		stx->stx_mtime.tv_sec = st.st_mtime;
+		stx->stx_ctime.tv_sec = st.st_ctime;
+		return (0);
+	}
+	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
+}
+
+static long
 hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	long ret;
@@ -457,6 +536,9 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	case SYS_ftruncate:
 		ret = hook_ftruncate(a1, a2, a3, a4, a5, a6, a7);
 		break;
+	case SYS_getdents:
+		ret = hook_getdents(a1, a2, a3, a4, a5, a6, a7);
+		break;
 	case SYS_rename:
 		ret = hook_rename(a1, a2, a3, a4, a5, a6, a7);
 		break;
@@ -472,6 +554,9 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	case SYS_unlink:
 		ret = hook_unlink(a1, a2, a3, a4, a5, a6, a7);
 		break;
+	case SYS_getdents64:
+		ret = hook_getdents64(a1, a2, a3, a4, a5, a6, a7);
+		break;
 	case SYS_openat:
 		ret = hook_openat(a1, a2, a3, a4, a5, a6, a7);
 		break;
@@ -483,6 +568,9 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		break;
 	case SYS_renameat:
 		ret = hook_renameat(a1, a2, a3, a4, a5, a6, a7);
+		break;
+	case SYS_statx:
+		ret = hook_statx(a1, a2, a3, a4, a5, a6, a7);
 		break;
 	default:
 		ret = next_sys_call(a1, a2, a3, a4, a5, a6, a7);
