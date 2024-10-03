@@ -3,4 +3,4 @@
 export LIBZPHOOK=@prefix@/lib/libfinchrun.so 
 export LD_LIBRARY_PATH=@prefix@/lib:$LD_LIBRARY_PATH
 export LD_PRELOAD=@prefix@/lib/libzpoline.so
-$@
+"$@"
