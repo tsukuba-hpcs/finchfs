@@ -536,6 +536,28 @@ hook_renameat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 }
 
 static long
+hook_faccessat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	int dirfd = (int)a2;
+	char *path = (char *)a3;
+	if (strncmp(path, prefix, prefix_len) == 0) {
+		struct stat st;
+		int ret;
+		path += prefix_len;
+		ret = finchfs_stat(path, &st);
+		return ret < 0 ? -errno : ret;
+	}
+	if ((dirfd >> FINCH_FD_SHIFT) == 1) {
+		struct stat st;
+		int ret;
+		ret = finchfs_fstatat(dirfd ^ (1 << FINCH_FD_SHIFT), path, &st,
+				      0);
+		return ret < 0 ? -errno : ret;
+	}
+	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
+}
+
+static long
 hook_statx(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int dirfd = (int)a2;
@@ -687,12 +709,17 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	case SYS_newfstatat:
 		ret = hook_newfstatat(a1, a2, a3, a4, a5, a6, a7);
 		break;
-		break;
 	case SYS_unlinkat:
 		ret = hook_unlinkat(a1, a2, a3, a4, a5, a6, a7);
 		break;
 	case SYS_renameat:
 		ret = hook_renameat(a1, a2, a3, a4, a5, a6, a7);
+		break;
+	case SYS_faccessat:
+		ret = hook_faccessat(a1, a2, a3, a4, a5, a6, a7);
+		break;
+	case SYS_faccessat2:
+		ret = hook_faccessat(a1, a2, a3, a4, a5, a6, a7);
 		break;
 	case SYS_statx:
 		ret = hook_statx(a1, a2, a3, a4, a5, a6, a7);
