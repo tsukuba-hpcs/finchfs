@@ -370,6 +370,24 @@ hook_mkdirat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 }
 
 static long
+hook_newfstatat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	int dirfd = (int)a2;
+	char *pathname = (char *)a3;
+	struct stat *st = (struct stat *)a4;
+	int flags = (int)a5;
+	if (strncmp(pathname, prefix, prefix_len) == 0) {
+		pathname += prefix_len;
+		return finchfs_stat(pathname, st);
+	}
+	if ((dirfd >> FINCH_FD_SHIFT) == 1) {
+		return finchfs_fstatat(dirfd ^ (1 << FINCH_FD_SHIFT), pathname,
+				       st, flags);
+	}
+	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
+}
+
+static long
 hook_unlinkat(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int dirfd = (int)a2;
@@ -562,6 +580,10 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		break;
 	case SYS_mkdirat:
 		ret = hook_mkdirat(a1, a2, a3, a4, a5, a6, a7);
+		break;
+	case SYS_newfstatat:
+		ret = hook_newfstatat(a1, a2, a3, a4, a5, a6, a7);
+		break;
 		break;
 	case SYS_unlinkat:
 		ret = hook_unlinkat(a1, a2, a3, a4, a5, a6, a7);
