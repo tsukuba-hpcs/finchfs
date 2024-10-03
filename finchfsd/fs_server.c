@@ -468,7 +468,8 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 	p += sizeof(open);
 	path = (char *)p;
 
-	log_debug("fs_rpc_inode_stat_recv() called path=%s", path);
+	log_debug("fs_rpc_inode_stat_recv() called path=%s open=%d", path,
+		  open);
 
 	iov_req_t *user_data =
 	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
@@ -503,9 +504,9 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 		entry_t *parent =
 		    get_parent_and_filename(base, name, path, &ctx);
 		if (parent == NULL) {
-			log_debug(
-			    "fs_rpc_inode_stat_recv() path=%s does not exist",
-			    path);
+			log_debug("fs_rpc_inode_stat_recv() path=%s "
+				  "does not exist",
+				  path);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 		} else {
 			entry_t key = {
@@ -513,7 +514,24 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 			};
 			entry_t *ent =
 			    RB_FIND(entrytree, &parent->entries, &key);
-			if (ent == NULL) {
+			if (strcmp(name, "") == 0) {
+				ent = base == 0 ? &ctx.root : (entry_t *)base;
+				st->chunk_size = ent->chunk_size;
+				st->i_ino = ent->i_ino;
+				st->mode = ent->mode;
+				st->mtime = ent->mtime;
+				st->ctime = ent->ctime;
+				st->size = ent->size;
+				memcpy(&st->eid, &ent, sizeof(ent));
+				*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+				if (open) {
+					ent->ref_count++;
+				}
+				if (((open >> 1) & O_RDWR) ||
+				    ((open >> 1) & O_WRONLY)) {
+					ent->ref_w_count++;
+				}
+			} else if (ent == NULL) {
 				log_debug("fs_rpc_inode_stat_recv() path=%s "
 					  "does not exist",
 					  path);

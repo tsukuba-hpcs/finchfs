@@ -1033,6 +1033,14 @@ TEST(FinchfsTest, Mmap1)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Root)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	struct stat st;
+	EXPECT_EQ(finchfs_stat("/", &st), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {
