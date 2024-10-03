@@ -334,6 +334,46 @@ hook_unlink(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 }
 
 static long
+hook_getxattr(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	char *path = (char *)a2;
+	if (strncmp(path, prefix, prefix_len) == 0) {
+		return -ENOTSUP;
+	}
+	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
+}
+
+static long
+hook_fgetxattr(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	int fd = (int)a2;
+	if ((fd >> FINCH_FD_SHIFT) == 1) {
+		return -ENOTSUP;
+	}
+	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
+}
+
+static long
+hook_listxattr(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	char *path = (char *)a2;
+	if (strncmp(path, prefix, prefix_len) == 0) {
+		return -ENOTSUP;
+	}
+	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
+}
+
+static long
+hook_flistxattr(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
+{
+	int fd = (int)a2;
+	if ((fd >> FINCH_FD_SHIFT) == 1) {
+		return -ENOTSUP;
+	}
+	return next_sys_call(a1, a2, a3, a4, a5, a6, a7);
+}
+
+static long
 hook_getdents64(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int fd = (int)a2;
@@ -616,6 +656,24 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 		break;
 	case SYS_unlink:
 		ret = hook_unlink(a1, a2, a3, a4, a5, a6, a7);
+		break;
+	case SYS_getxattr:
+		ret = hook_getxattr(a1, a2, a3, a4, a5, a6, a7);
+		break;
+	case SYS_lgetxattr:
+		ret = hook_getxattr(a1, a2, a3, a4, a5, a6, a7);
+		break;
+	case SYS_fgetxattr:
+		ret = hook_fgetxattr(a1, a2, a3, a4, a5, a6, a7);
+		break;
+	case SYS_listxattr:
+		ret = hook_listxattr(a1, a2, a3, a4, a5, a6, a7);
+		break;
+	case SYS_llistxattr:
+		ret = hook_listxattr(a1, a2, a3, a4, a5, a6, a7);
+		break;
+	case SYS_flistxattr:
+		ret = hook_flistxattr(a1, a2, a3, a4, a5, a6, a7);
 		break;
 	case SYS_getdents64:
 		ret = hook_getdents64(a1, a2, a3, a4, a5, a6, a7);
