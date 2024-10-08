@@ -30,6 +30,13 @@ if test x$with_pmemkv != xno; then
   PKG_CHECK_MODULES([LIBPMEMKV], [libpmemkv])
 fi
 
+AC_ARG_ENABLE([mmap],
+  [AS_HELP_STRING([--enable-mmap], [Enable mmap support])],
+  [if test "x$enable_mmap" = "xyes"; then
+     AC_DEFINE([FINCH_MMAP_SUPPORT], 1, [Enable mmap support])
+  fi],
+  [enable_mmap=no])
+
 # Checks for header files.
 AC_CHECK_HEADERS([stdlib.h string.h unistd.h stdint.h])
 

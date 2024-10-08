@@ -43,7 +43,9 @@ static struct fd_table {
 		uint64_t pos;
 	} getdents_state;
 } *fd_table;
+#define IS_NULL_STRING(str) (str == NULL || str[0] == '\0')
 
+#ifdef FINCH_MMAP_SUPPORT
 struct mmap_item;
 
 typedef struct mmap_item {
@@ -112,8 +114,6 @@ query_mmap(uint64_t fault_addr)
 	}
 	return (NULL);
 }
-
-#define IS_NULL_STRING(str) (str == NULL || str[0] == '\0')
 
 static void *
 fault_handler_thread(void *arg)
@@ -208,6 +208,7 @@ fault_handler_thread(void *arg)
 		}
 	}
 }
+#endif
 
 int
 finchfs_init(const char *addrfile)
@@ -232,8 +233,10 @@ finchfs_init(const char *addrfile)
 		fd_table[i].path = NULL;
 		fd_table[i].eid = malloc(sizeof(uint64_t) * nvprocs);
 	}
+#ifdef FINCH_MMAP_SUPPORT
 	if ((uffd = syscall(__NR_userfaultfd, O_CLOEXEC | O_NONBLOCK)) < 0) {
-		log_error("syscall(__NR_userfaultfd) failed errno=%d", errno);
+		log_error("NOTE: /proc/sys/vm/unprivileged_userfaultfd should "
+			  "be set 1");
 		goto init_err;
 	}
 	uffdio_api.api = UFFD_API;
@@ -246,6 +249,7 @@ finchfs_init(const char *addrfile)
 		log_error("pthread_create failed");
 		goto init_err;
 	}
+#endif
 	return (0);
 init_err:
 	finchfs_term();
@@ -1068,6 +1072,7 @@ void *
 finchfs_mmap(void *addr, size_t length, int prot, int flags, int fd,
 	     off_t offset)
 {
+#ifdef FINCH_MMAP_SUPPORT
 	struct uffdio_register uffdio_register;
 	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
@@ -1105,11 +1110,15 @@ finchfs_mmap(void *addr, size_t length, int prot, int flags, int fd,
 	item->offset = offset;
 	add_mmap_item(item);
 	return (addr);
+#endif
+	errno = ENOTSUP;
+	return (MAP_FAILED);
 }
 
 int
 finchfs_munmap(void *addr, size_t length)
 {
+#ifdef FINCH_MMAP_SUPPORT
 	struct uffdio_range uffdio_range;
 	uffdio_range.start = (uint64_t)addr;
 	uffdio_range.len = length;
@@ -1124,4 +1133,7 @@ finchfs_munmap(void *addr, size_t length)
 		return (-1);
 	}
 	return (0);
+#endif
+	errno = ENOTSUP;
+	return (-1);
 }

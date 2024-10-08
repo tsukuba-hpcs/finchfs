@@ -28,7 +28,7 @@ jobs:
       run: autoreconf -i
 
     - name: Configure the project
-      run: ./configure
+      run: ./configure --enable-mmap
 
     - name: Build the project
       run: make
