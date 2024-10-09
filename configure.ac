@@ -37,6 +37,14 @@ AC_ARG_ENABLE([mmap],
   fi],
   [enable_mmap=no])
 
+AM_CONDITIONAL([FINCH_ZPOLINE_SUPPORT], [test x$enable_zpoline = xyes])
+AC_ARG_ENABLE([zpoline],
+  [AS_HELP_STRING([--enable-zpoline], [Enable zpoline support])],
+  [if test "x$enable_zpoline" = "xyes"; then
+     AC_DEFINE([FINCH_ZPOLINE_SUPPORT], 1, [Enable zpoline support])
+  fi],
+  [enable_zpoline=no])
+
 # Checks for header files.
 AC_CHECK_HEADERS([stdlib.h string.h unistd.h stdint.h])
 

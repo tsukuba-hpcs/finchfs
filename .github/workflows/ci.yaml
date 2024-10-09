@@ -28,7 +28,7 @@ jobs:
       run: autoreconf -i
 
     - name: Configure the project
-      run: ./configure --enable-mmap
+      run: ./configure --enable-mmap --enable-zpoline
 
     - name: Build the project
       run: make
