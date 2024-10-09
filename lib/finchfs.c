@@ -80,7 +80,8 @@ add_mmap_item(mmap_item_t *item)
 int
 del_mmap_item(uint64_t addr, size_t len)
 {
-	mmap_item_t *cur = mm_mng.head;
+	mmap_item_t *cur;
+	cur = mm_mng.head;
 	while (cur) {
 		if (cur->addr == addr && cur->len == len) {
 			if (cur->prev) {
@@ -104,7 +105,8 @@ del_mmap_item(uint64_t addr, size_t len)
 mmap_item_t *
 query_mmap(uint64_t fault_addr)
 {
-	mmap_item_t *cur = mm_mng.tail;
+	mmap_item_t *cur;
+	cur = mm_mng.tail;
 	while (cur) {
 		if (cur->addr <= fault_addr &&
 		    fault_addr < cur->addr + cur->len) {
@@ -118,19 +120,26 @@ query_mmap(uint64_t fault_addr)
 static void *
 fault_handler_thread(void *arg)
 {
-	struct pollfd pollfd;
-	struct uffdio_copy uffdio_copy;
-	int nready;
-	ssize_t nread;
-	struct uffd_msg msg;
-	uint64_t page_size = sysconf(_SC_PAGE_SIZE);
-	uint8_t *page = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
-			     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	uint64_t page_size;
+	uint8_t *page;
+	page_size = sysconf(_SC_PAGE_SIZE);
+	page = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (page == MAP_FAILED) {
 		log_error("mmap failed");
 		exit(1);
 	}
 	while (1) {
+		struct pollfd pollfd;
+		struct uffdio_copy uffdio_copy;
+		int nready, nchunks;
+		ssize_t nread, ret;
+		struct uffd_msg msg;
+		mmap_item_t *item;
+		uint64_t base, index;
+		off_t offset, local_pos;
+		size_t size, tot;
+		void *buf_p, **hdles;
 		pollfd.fd = uffd;
 		pollfd.events = POLLIN;
 		nready = poll(&pollfd, 1, -1);
@@ -151,29 +160,28 @@ fault_handler_thread(void *arg)
 			log_error("Unexpected event on userfaultfd");
 			exit(1);
 		}
-		mmap_item_t *item = query_mmap(msg.arg.pagefault.address);
-		if (item == NULL) {
+		if ((item = query_mmap(msg.arg.pagefault.address)) == NULL) {
 			log_error("mapped area not found");
 			exit(1);
 		}
 		memset(page, 0, page_size);
-		uint64_t base =
-		    (uint64_t)msg.arg.pagefault.address & ~(page_size - 1);
-		off_t offset = base - item->addr + item->offset;
-		void *buf_p = (void *)page;
-		size_t size = page_size;
+		base = (uint64_t)msg.arg.pagefault.address & ~(page_size - 1);
+		offset = base - item->addr + item->offset;
+		buf_p = (void *)page;
+		size = page_size;
 		if (offset < 0) {
 			buf_p = page - offset;
 			size = page_size + offset;
 		}
-		uint64_t index = offset / item->chunk_size;
-		off_t local_pos = offset % item->chunk_size;
-		int nchunks = (local_pos + size + item->chunk_size - 1) /
-			      item->chunk_size;
-		void **hdles = malloc(sizeof(void *) * nchunks);
-		size_t tot = 0;
+		index = offset / item->chunk_size;
+		local_pos = offset % item->chunk_size;
+		nchunks = (local_pos + size + item->chunk_size - 1) /
+			  item->chunk_size;
+		hdles = malloc(sizeof(void *) * nchunks);
+		tot = 0;
 		for (int i = 0; i < nchunks; ++i) {
-			size_t local_size = item->chunk_size - local_pos;
+			size_t local_size;
+			local_size = item->chunk_size - local_pos;
 			if (local_size > size - tot) {
 				local_size = size - tot;
 			}
@@ -189,8 +197,7 @@ fault_handler_thread(void *arg)
 			local_pos = 0;
 			buf_p += local_size;
 		}
-		ssize_t ret =
-		    fs_async_rpc_inode_read_wait(hdles, nchunks, *item->size);
+		ret = fs_async_rpc_inode_read_wait(hdles, nchunks, *item->size);
 		free(hdles);
 		if (ret < 0) {
 			log_error("fs_async_rpc_inode_read_wait failed");
@@ -213,8 +220,7 @@ fault_handler_thread(void *arg)
 int
 finchfs_init(const char *addrfile)
 {
-	char *log_level;
-	char *chunk_size;
+	char *log_level, *chunk_size;
 	struct uffdio_api uffdio_api;
 	pthread_t fault_handler;
 	log_level = getenv("FINCHFS_LOG_LEVEL");
@@ -292,11 +298,11 @@ int
 finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 			  size_t chunk_size)
 {
+	char *p;
+	int ret, fd;
 	log_debug("finchfs_create_chunk_size() called path=%s chunk_size=%zu",
 		  path, chunk_size);
-	char *p = canonical_path(path);
-	int ret;
-	int fd;
+	p = canonical_path(path);
 	for (fd = 0; fd < fd_table_size; ++fd) {
 		if (fd_table[fd].path == NULL) {
 			break;
@@ -333,10 +339,11 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 int
 finchfs_open(const char *path, int32_t flags)
 {
+	char *p;
+	int ret, fd;
+	fs_stat_t st;
 	log_debug("finchfs_open() called path=%s", path);
-	char *p = canonical_path(path);
-	int ret;
-	int fd;
+	p = canonical_path(path);
 	for (fd = 0; fd < fd_table_size; ++fd) {
 		if (fd_table[fd].path == NULL) {
 			break;
@@ -349,7 +356,6 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].path = p;
 	fd_table[fd].access = flags & 0b11;
 	fd_table[fd].pos = 0;
-	fs_stat_t st;
 	if (flags & __O_DIRECTORY) {
 		ret = fs_rpc_inode_open_dir(NULL, p, fd_table[fd].eid, &st,
 					    1 << 4);
@@ -392,12 +398,13 @@ finchfs_open(const char *path, int32_t flags)
 int
 finchfs_close(int fd)
 {
+	int ret;
 	log_debug("finchfs_close() called fd=%d", fd);
 	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
 		return (-1);
 	}
-	int ret = 0;
+	ret = 0;
 	if (!S_ISDIR(fd_table[fd].mode)) {
 		ret =
 		    fs_rpc_inode_close(fd_table[fd].path, fd_table[fd].eid[0],
@@ -414,11 +421,9 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 	ssize_t ret;
 	uint64_t index;
 	off_t local_pos;
-	size_t chunk_size;
-	size_t tot;
+	size_t chunk_size, tot;
 	int nchunks;
-	void **hdles;
-	void *buf_p;
+	void *buf_p, **hdles;
 	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
 		return (-1);
@@ -445,7 +450,8 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 	tot = 0;
 	buf_p = (void *)buf;
 	for (int i = 0; i < nchunks; ++i) {
-		size_t local_size = chunk_size - local_pos;
+		size_t local_size;
+		local_size = chunk_size - local_pos;
 		if (local_size > size - tot) {
 			local_size = size - tot;
 		}
@@ -462,7 +468,8 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 		buf_p += local_size;
 	}
 	if (ret < 0) {
-		int nreq = 0;
+		int nreq;
+		nreq = 0;
 		for (int i = 0; i < nchunks; ++i) {
 			if (hdles[i]) {
 				hdles[nreq++] = hdles[i];
@@ -489,8 +496,8 @@ finchfs_pwrite(int fd, const void *buf, size_t size, off_t offset)
 ssize_t
 finchfs_write(int fd, const void *buf, size_t size)
 {
-	log_debug("finchfs_write() called fd=%d size=%zu", fd, size);
 	ssize_t ret;
+	log_debug("finchfs_write() called fd=%d size=%zu", fd, size);
 	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
 		return (-1);
@@ -508,8 +515,7 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 	ssize_t ret;
 	uint64_t index;
 	off_t local_pos;
-	size_t chunk_size;
-	size_t tot;
+	size_t chunk_size, tot;
 	int nchunks;
 	void **hdles;
 	void *buf_p;
@@ -539,7 +545,8 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 	tot = 0;
 	buf_p = (void *)buf;
 	for (int i = 0; i < nchunks; ++i) {
-		size_t local_size = chunk_size - local_pos;
+		size_t local_size;
+		local_size = chunk_size - local_pos;
 		if (local_size > size - tot) {
 			local_size = size - tot;
 		}
@@ -556,7 +563,8 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 		buf_p += local_size;
 	}
 	if (ret < 0) {
-		int nreq = 0;
+		int nreq;
+		nreq = 0;
 		for (int i = 0; i < nchunks; ++i) {
 			if (hdles[i]) {
 				hdles[nreq++] = hdles[i];
@@ -583,8 +591,8 @@ finchfs_pread(int fd, void *buf, size_t size, off_t offset)
 ssize_t
 finchfs_read(int fd, void *buf, size_t size)
 {
-	log_debug("finchfs_read() called fd=%d size=%zu", fd, size);
 	ssize_t ret;
+	log_debug("finchfs_read() called fd=%d size=%zu", fd, size);
 	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
 		return (-1);
@@ -625,12 +633,12 @@ finchfs_seek(int fd, off_t offset, int whence)
 int
 finchfs_fsync(int fd)
 {
+	int ret;
 	log_debug("finchfs_fsync() called fd=%d", fd);
 	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
 		return (-1);
 	}
-	int ret;
 	ret = fs_rpc_inode_fsync(fd_table[fd].i_ino, fd_table[fd].eid[0],
 				 &fd_table[fd].size);
 	return (ret);
@@ -639,9 +647,10 @@ finchfs_fsync(int fd)
 int
 finchfs_unlink(const char *path)
 {
-	log_debug("finchfs_unlink() called path=%s", path);
 	int ret;
-	char *p = canonical_path(path);
+	char *p;
+	log_debug("finchfs_unlink() called path=%s", path);
+	p = canonical_path(path);
 	ret = fs_rpc_inode_unlink(NULL, p);
 	free(p);
 	return (ret);
@@ -650,9 +659,10 @@ finchfs_unlink(const char *path)
 int
 finchfs_mkdir(const char *path, mode_t mode)
 {
-	log_debug("finchfs_mkdir() called path=%s", path);
 	int ret;
-	char *p = canonical_path(path);
+	char *p;
+	log_debug("finchfs_mkdir() called path=%s", path);
+	p = canonical_path(path);
 	mode |= S_IFDIR;
 	ret = fs_rpc_mkdir(NULL, p, mode);
 	free(p);
@@ -662,9 +672,10 @@ finchfs_mkdir(const char *path, mode_t mode)
 int
 finchfs_rmdir(const char *path)
 {
-	log_debug("finchfs_rmdir() called path=%s", path);
 	int ret;
-	char *p = canonical_path(path);
+	char *p;
+	log_debug("finchfs_rmdir() called path=%s", path);
+	p = canonical_path(path);
 	ret = fs_rpc_inode_unlink_all(NULL, p);
 	free(p);
 	return (ret);
@@ -673,10 +684,11 @@ finchfs_rmdir(const char *path)
 int
 finchfs_stat(const char *path, struct stat *st)
 {
-	log_debug("finchfs_stat() called path=%s", path);
-	char *p = canonical_path(path);
+	char *p;
 	fs_stat_t fst;
 	int ret;
+	log_debug("finchfs_stat() called path=%s", path);
+	p = canonical_path(path);
 	ret = fs_rpc_inode_stat(NULL, p, &fst, 0);
 	if (ret) {
 		free(p);
@@ -721,9 +733,10 @@ int
 finchfs_readdir(const char *path, void *buf,
 		void (*filler)(void *, const char *, const struct stat *))
 {
-	log_debug("finchfs_readdir() called path=%s", path);
 	int ret;
-	char *p = canonical_path(path);
+	char *p;
+	log_debug("finchfs_readdir() called path=%s", path);
+	p = canonical_path(path);
 	ret = fs_rpc_readdir(p, buf, filler);
 	free(p);
 	return (ret);
@@ -732,12 +745,13 @@ finchfs_readdir(const char *path, void *buf,
 int
 finchfs_rename(const char *oldpath, const char *newpath)
 {
+	int ret;
+	char *oldp, *newp;
+	fs_stat_t st;
 	log_debug("finchfs_rename() called oldpath=%s newpath=%s", oldpath,
 		  newpath);
-	int ret;
-	char *oldp = canonical_path(oldpath);
-	char *newp = canonical_path(newpath);
-	fs_stat_t st;
+	oldp = canonical_path(oldpath);
+	newp = canonical_path(newpath);
 	ret = fs_rpc_inode_stat(NULL, oldp, &st, 0);
 	if (ret) {
 		free(oldp);
@@ -762,9 +776,10 @@ finchfs_find(const char *path, const char *query,
 	     struct finchfs_find_param *param, void *buf,
 	     void (*filler)(void *, const char *))
 {
-	log_debug("finchfs_find() called path=%s query=%s", path, query);
 	int ret;
-	char *p = canonical_path(path);
+	char *p;
+	log_debug("finchfs_find() called path=%s query=%s", path, query);
+	p = canonical_path(path);
 	ret = fs_rpc_find(p, query, param, buf, filler);
 	free(p);
 	return (ret);
@@ -783,10 +798,12 @@ int
 finchfs_createat_chunk_size(int dirfd, const char *pathname, int flags,
 			    mode_t mode, size_t chunk_size)
 {
+	uint64_t *eid;
+	char *p;
+	int ret, fd;
 	log_debug("finchfs_createat_chunk_size() called dirfd=%d path=%s "
 		  "chunk_size=%zu",
 		  dirfd, pathname, chunk_size);
-	uint64_t *eid;
 	if (dirfd == AT_FDCWD) {
 		eid = NULL;
 	} else if (dirfd < 0 || dirfd >= fd_table_size ||
@@ -796,9 +813,7 @@ finchfs_createat_chunk_size(int dirfd, const char *pathname, int flags,
 	} else {
 		eid = fd_table[dirfd].eid;
 	}
-	char *p = canonical_path(pathname);
-	int ret;
-	int fd;
+	p = canonical_path(pathname);
 	for (fd = 0; fd < fd_table_size; ++fd) {
 		if (fd_table[fd].path == NULL) {
 			break;
@@ -833,8 +848,11 @@ finchfs_createat_chunk_size(int dirfd, const char *pathname, int flags,
 int
 finchfs_openat(int dirfd, const char *pathname, int flags)
 {
-	log_debug("finchfs_openat() called dirfd=%d path=%s", dirfd, pathname);
 	uint64_t *eid;
+	char *p;
+	int ret, fd;
+	fs_stat_t st;
+	log_debug("finchfs_openat() called dirfd=%d path=%s", dirfd, pathname);
 	if (dirfd == AT_FDCWD) {
 		eid = NULL;
 	} else if (dirfd < 0 || dirfd >= fd_table_size ||
@@ -844,9 +862,7 @@ finchfs_openat(int dirfd, const char *pathname, int flags)
 	} else {
 		eid = fd_table[dirfd].eid;
 	}
-	char *p = canonical_path(pathname);
-	int ret;
-	int fd;
+	p = canonical_path(pathname);
 	for (fd = 0; fd < fd_table_size; ++fd) {
 		if (fd_table[fd].path == NULL) {
 			break;
@@ -859,7 +875,6 @@ finchfs_openat(int dirfd, const char *pathname, int flags)
 	fd_table[fd].path = p;
 	fd_table[fd].access = flags & 0b11;
 	fd_table[fd].pos = 0;
-	fs_stat_t st;
 	if (flags & __O_DIRECTORY) {
 		ret = fs_rpc_inode_open_dir(eid, p, fd_table[fd].eid, &st,
 					    1 << 4);
@@ -898,8 +913,11 @@ finchfs_openat(int dirfd, const char *pathname, int flags)
 int
 finchfs_fstatat(int dirfd, const char *pathname, struct stat *st, int flags)
 {
-	log_debug("finchfs_fstatat() called dirfd=%d path=%s", dirfd, pathname);
 	uint64_t *eid;
+	char *p;
+	fs_stat_t fst;
+	int ret;
+	log_debug("finchfs_fstatat() called dirfd=%d path=%s", dirfd, pathname);
 	if (dirfd == AT_FDCWD) {
 		eid = NULL;
 	} else if (dirfd < 0 || dirfd >= fd_table_size ||
@@ -909,9 +927,7 @@ finchfs_fstatat(int dirfd, const char *pathname, struct stat *st, int flags)
 	} else {
 		eid = fd_table[dirfd].eid;
 	}
-	char *p = canonical_path(pathname);
-	fs_stat_t fst;
-	int ret;
+	p = canonical_path(pathname);
 	ret = fs_rpc_inode_stat(eid, p, &fst, 0);
 	if (ret) {
 		free(p);
@@ -934,8 +950,10 @@ finchfs_fstatat(int dirfd, const char *pathname, struct stat *st, int flags)
 int
 finchfs_mkdirat(int dirfd, const char *pathname, mode_t mode)
 {
-	log_debug("finchfs_mkdirat() called dirfd=%d path=%s", dirfd, pathname);
 	uint64_t *eid;
+	int ret;
+	char *p;
+	log_debug("finchfs_mkdirat() called dirfd=%d path=%s", dirfd, pathname);
 	if (dirfd == AT_FDCWD) {
 		eid = NULL;
 	} else if (dirfd < 0 || dirfd >= fd_table_size ||
@@ -945,8 +963,7 @@ finchfs_mkdirat(int dirfd, const char *pathname, mode_t mode)
 	} else {
 		eid = fd_table[dirfd].eid;
 	}
-	int ret;
-	char *p = canonical_path(pathname);
+	p = canonical_path(pathname);
 	mode |= S_IFDIR;
 	ret = fs_rpc_mkdir(eid, p, mode);
 	free(p);
@@ -956,9 +973,11 @@ finchfs_mkdirat(int dirfd, const char *pathname, mode_t mode)
 int
 finchfs_unlinkat(int dirfd, const char *pathname, int flags)
 {
+	uint64_t *eid;
+	int ret;
+	char *p;
 	log_debug("finchfs_unlinkat() called dirfd=%d path=%s", dirfd,
 		  pathname);
-	uint64_t *eid;
 	if (dirfd == AT_FDCWD) {
 		eid = NULL;
 	} else if (dirfd < 0 || dirfd >= fd_table_size ||
@@ -968,8 +987,7 @@ finchfs_unlinkat(int dirfd, const char *pathname, int flags)
 	} else {
 		eid = fd_table[dirfd].eid;
 	}
-	int ret;
-	char *p = canonical_path(pathname);
+	p = canonical_path(pathname);
 	if (flags & AT_REMOVEDIR) {
 		ret = fs_rpc_inode_unlink_all(eid, p);
 	} else {
@@ -983,11 +1001,13 @@ int
 finchfs_renameat(int olddirfd, const char *oldpath, int newdirfd,
 		 const char *newpath)
 {
+	uint64_t *oldeid, *neweid;
+	int ret;
+	char *oldp, *newp;
+	fs_stat_t st;
 	log_debug("finchfs_renameat() called olddirfd=%d oldpath=%s "
 		  "newdirfd=%d newpath=%s",
 		  olddirfd, oldpath, newdirfd, newpath);
-	uint64_t *oldeid;
-	uint64_t *neweid;
 	if (olddirfd == AT_FDCWD) {
 		oldeid = NULL;
 	} else if (olddirfd < 0 || olddirfd >= fd_table_size ||
@@ -1006,10 +1026,8 @@ finchfs_renameat(int olddirfd, const char *oldpath, int newdirfd,
 	} else {
 		neweid = fd_table[newdirfd].eid;
 	}
-	int ret;
-	char *oldp = canonical_path(oldpath);
-	char *newp = canonical_path(newpath);
-	fs_stat_t st;
+	oldp = canonical_path(oldpath);
+	newp = canonical_path(newpath);
 	ret = fs_rpc_inode_stat(oldeid, oldp, &st, 0);
 	if (ret) {
 		free(oldp);
@@ -1032,6 +1050,8 @@ finchfs_renameat(int olddirfd, const char *oldpath, int newdirfd,
 ssize_t
 finchfs_getdents(int fd, void *dirp, size_t count)
 {
+	int ret;
+	size_t c;
 	log_debug("finchfs_getdents() called fd=%d", fd);
 	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
@@ -1041,9 +1061,7 @@ finchfs_getdents(int fd, void *dirp, size_t count)
 		errno = ENOTDIR;
 		return (-1);
 	}
-	int ret;
-	size_t c = count;
-
+	c = count;
 	while (fd_table[fd].getdents_state.rank < nvprocs) {
 		ret = fs_rpc_getdents(
 		    fd_table[fd].getdents_state.rank, fd_table[fd].eid,
@@ -1074,6 +1092,7 @@ finchfs_mmap(void *addr, size_t length, int prot, int flags, int fd,
 {
 #ifdef FINCH_MMAP_SUPPORT
 	struct uffdio_register uffdio_register;
+	mmap_item_t *item;
 	if (fd < 0 || fd >= fd_table_size || fd_table[fd].path == NULL) {
 		errno = EBADF;
 		return (MAP_FAILED);
@@ -1101,7 +1120,7 @@ finchfs_mmap(void *addr, size_t length, int prot, int flags, int fd,
 		log_error("ioctl failed");
 		return (MAP_FAILED);
 	}
-	mmap_item_t *item = malloc(sizeof(mmap_item_t));
+	item = malloc(sizeof(mmap_item_t));
 	item->addr = (uint64_t)addr;
 	item->i_ino = fd_table[fd].i_ino;
 	item->chunk_size = fd_table[fd].chunk_size;
