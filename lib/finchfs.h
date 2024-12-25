@@ -26,7 +26,7 @@ typedef enum {
 	FINCHFS_FIND_FLAG_RETURN_PATH = (1 << 1),
 } finchfs_find_flag_t;
 struct finchfs_find_param {
-	uint8_t flag;
+	char flag;
 	size_t total_nentries;
 	size_t match_nentries;
 };
