@@ -42,7 +42,7 @@ jobs:
     - name: Run finchfsd
       run: |
         mpirun --allow-run-as-root -x LD_LIBRARY_PATH=/usr/local/lib --np ${{ matrix.nprocs }} finchfsd &
-        sleep 5
+        sleep 30
 
     - name: Build finchfs_test
       run: g++ tests/finchfs_test.cc `pkg-config --libs finchfs` -lgtest -o finchfs_test
