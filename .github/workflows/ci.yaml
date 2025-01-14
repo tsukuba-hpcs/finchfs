@@ -11,7 +11,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        nprocs: [1, 2, 4, 8]
+      fail-fast: false
     steps:
     - name: Check out repository
       uses: actions/checkout@v3
@@ -38,7 +41,7 @@ jobs:
 
     - name: Run finchfsd
       run: |
-        mpirun --allow-run-as-root -x LD_LIBRARY_PATH=/usr/local/lib --np 1 finchfsd &
+        mpirun --allow-run-as-root -x LD_LIBRARY_PATH=/usr/local/lib --np ${{ matrix.nprocs }} finchfsd &
         sleep 5
 
     - name: Build finchfs_test
