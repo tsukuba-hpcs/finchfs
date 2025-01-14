@@ -1388,7 +1388,7 @@ fs_rpc_inode_open_dir(uint64_t *base, const char *path, uint64_t *eid,
 		iov[i * 3 + 1].length = sizeof(open);
 		iov[i * 3 + 2].buffer = (void *)path;
 		iov[i * 3 + 2].length = strlen(path) + 1;
-		handle->ret = FINCH_INPROGRESS;
+		handle[i].ret = FINCH_INPROGRESS;
 		handle_addr[i] = &handle[i];
 	}
 
