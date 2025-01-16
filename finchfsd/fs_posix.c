@@ -92,7 +92,7 @@ fs_inode_read(struct fs_ctx *ctx, uint64_t i_ino, uint64_t index, off_t offset,
 	int fd;
 	fd = open(buffer, O_RDONLY);
 	if (fd < 0) {
-		log_error("fs_inode_read open() failed: %s", strerror(errno));
+		log_info("fs_inode_read open() failed: %s", strerror(errno));
 		return (-1);
 	}
 	int ret;

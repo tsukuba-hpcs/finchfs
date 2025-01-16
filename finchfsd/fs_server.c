@@ -766,7 +766,7 @@ fs_rpc_inode_read_recv(void *arg, const void *header, size_t header_length,
 	rhdr->size = fs_inode_read(ctx.fs, rhdr->i_ino, rhdr->index,
 				   rhdr->offset, rhdr->size, user_data->buf);
 	if (rhdr->size < 0) {
-		log_error("fs_inode_read() failed: %s", strerror(errno));
+		log_info("fs_inode_read() failed: %s", strerror(errno));
 		rhdr->ret = -errno;
 		rhdr->size = 1;
 	} else {
