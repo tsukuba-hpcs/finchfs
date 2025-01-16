@@ -627,6 +627,9 @@ hook_function(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 	case SYS_lstat:
 		ret = hook_lstat(a1, a2, a3, a4, a5, a6, a7);
 		break;
+	case SYS_lseek:
+		ret = hook_lseek(a1, a2, a3, a4, a5, a6, a7);
+		break;
 	case SYS_pread64:
 		ret = hook_pread64(a1, a2, a3, a4, a5, a6, a7);
 		break;
