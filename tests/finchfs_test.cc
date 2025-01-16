@@ -922,6 +922,18 @@ TEST(FinchfsTest, Fstatat)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Fstatat2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int dirfd;
+	dirfd = finchfs_open("/createat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	struct stat st;
+	EXPECT_EQ(finchfs_fstatat(dirfd, "", &st, AT_EMPTY_PATH), 0);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 struct test_dirent {
     unsigned long  d_ino;
     unsigned long  d_off;

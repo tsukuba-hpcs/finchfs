@@ -1,4 +1,5 @@
 #define _ATFILE_SOURCE
+#define _GNU_SOURCE
 #include <stdint.h>
 #include <ucp/api/ucp.h>
 #include <fcntl.h>
@@ -924,6 +925,8 @@ finchfs_fstatat(int dirfd, const char *pathname, struct stat *st, int flags)
 		   fd_table[dirfd].path == NULL) {
 		errno = EBADF;
 		return (-1);
+	} else if (flags & AT_EMPTY_PATH) {
+		return finchfs_fstat(dirfd, st);
 	} else {
 		eid = fd_table[dirfd].eid;
 	}
