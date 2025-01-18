@@ -246,6 +246,29 @@ TEST(FinchfsTest, Read3)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Read4)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create_chunk_size("/read4", O_RDWR, S_IRWXU, 128);
+	EXPECT_EQ(fd, 0);
+	char buf[200];
+	rnd_fill(buf, sizeof(buf));
+	ssize_t n;
+	n = finchfs_write(fd, buf, sizeof(buf));
+	EXPECT_EQ(n, sizeof(buf));
+	finchfs_close(fd);
+	fd = finchfs_open("/read4", O_RDONLY);
+	EXPECT_EQ(fd, 0);
+	char buf2[200];
+	n = finchfs_read(fd, buf2, 128);
+	EXPECT_EQ(n, 128);
+	n = finchfs_read(fd, buf2, 128);
+	EXPECT_EQ(n, 200-128);
+	finchfs_close(fd);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 TEST(FinchfsTest, Create_O_TRUNC)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);

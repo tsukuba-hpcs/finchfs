@@ -1339,28 +1339,14 @@ fs_async_rpc_inode_read_wait(void **hdles, int nreqs, size_t size)
 			errno = -handles[i]->ret;
 			ss = -1;
 			break;
-		} else if (handles[i]->ss == handles[i]->header.size) {
-			ss += handles[i]->ss;
 		} else {
 			if (i < exist) {
 				memset(handles[i]->buf + handles[i]->ss, 0,
 				       handles[i]->header.size -
 					   handles[i]->ss);
 				ss += handles[i]->header.size;
-			} else if (size <
-				   handles[i]->header.offset + handles[i]->ss) {
-				ss += handles[i]->ss;
-				break;
 			} else {
-				ssize_t s = handles[i]->header.size;
-				if (handles[i]->header.offset + s > size) {
-					s = size - handles[i]->header.offset;
-				}
-				if (s > handles[i]->ss) {
-					memset(handles[i]->buf + handles[i]->ss,
-					       0, s - handles[i]->ss);
-				}
-				ss += s;
+				ss += handles[i]->ss;
 				break;
 			}
 		}
