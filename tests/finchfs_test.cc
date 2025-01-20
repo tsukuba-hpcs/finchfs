@@ -265,6 +265,8 @@ TEST(FinchfsTest, Read4)
 	EXPECT_EQ(n, 128);
 	n = finchfs_read(fd, buf2, 128);
 	EXPECT_EQ(n, 200-128);
+	n = finchfs_read(fd, buf2, 128);
+	EXPECT_EQ(n, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_term(), 0);
 }
