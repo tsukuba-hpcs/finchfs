@@ -44,8 +44,6 @@ RB_GENERATE(entrytree, entry, link, entry_compare);
 struct worker_ctx {
 	int rank;
 	int nprocs;
-	int lrank;
-	int lnprocs;
 	uint64_t i_ino;
 	ucp_context_h ucp_context;
 	ucp_worker_h ucp_worker;
@@ -1247,13 +1245,10 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 }
 
 int
-fs_server_init(char *db_dir, int rank, int nprocs, int lrank, int lnprocs,
-	       int *shutdown)
+fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 {
 	ctx.rank = rank;
 	ctx.nprocs = nprocs;
-	ctx.lrank = lrank;
-	ctx.lnprocs = lnprocs;
 	ctx.i_ino = rank + nprocs;
 	ctx.shutdown = shutdown;
 
@@ -1430,7 +1425,7 @@ fs_server_init(char *db_dir, int rank, int nprocs, int lrank, int lnprocs,
 		return (-1);
 	}
 
-	ctx.fs = fs_inode_init(db_dir, lrank);
+	ctx.fs = fs_inode_init(db_dir);
 	return (0);
 }
 

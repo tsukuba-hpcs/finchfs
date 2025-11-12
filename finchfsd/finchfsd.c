@@ -17,8 +17,6 @@
 typedef struct {
 	int rank;
 	int nprocs;
-	int lrank;
-	int lnprocs;
 	MPI_Comm lcomm;
 	int shutdown;
 	char *db_dir;
@@ -120,13 +118,8 @@ main(int argc, char **argv)
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &ctx.rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &ctx.nprocs);
-	MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, ctx.rank,
-			    MPI_INFO_NULL, &ctx.lcomm);
-	MPI_Comm_rank(ctx.lcomm, &ctx.lrank);
-	MPI_Comm_size(ctx.lcomm, &ctx.lnprocs);
 
-	if (fs_server_init(ctx.db_dir, ctx.rank, ctx.nprocs, ctx.lrank,
-			   ctx.lnprocs, &ctx.shutdown)) {
+	if (fs_server_init(ctx.db_dir, ctx.rank, ctx.nprocs, &ctx.shutdown)) {
 		log_fatal("fs_server_init() failed");
 		return (-1);
 	}
