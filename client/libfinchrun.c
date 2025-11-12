@@ -25,7 +25,7 @@ static long
 hook_read(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int fd = a2;
-	void *buf = a3;
+	void *buf = (void *)a3;
 	size_t count = a4;
 	ssize_t ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
@@ -39,7 +39,7 @@ static long
 hook_write(long a1, long a2, long a3, long a4, long a5, long a6, long a7)
 {
 	int fd = a2;
-	void *buf = a3;
+	void *buf = (void *)a3;
 	size_t count = a4;
 	ssize_t ret;
 	if ((fd >> FINCH_FD_SHIFT) == 1) {
