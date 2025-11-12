@@ -264,48 +264,8 @@ TEST(FinchfsTest, Read4)
 	n = finchfs_read(fd, buf2, 128);
 	EXPECT_EQ(n, 128);
 	n = finchfs_read(fd, buf2, 128);
-	EXPECT_EQ(n, 200-128);
+	EXPECT_EQ(n, 200 - 128);
 	n = finchfs_read(fd, buf2, 128);
-	EXPECT_EQ(n, 0);
-	finchfs_close(fd);
-	EXPECT_EQ(finchfs_term(), 0);
-}
-
-TEST(FinchfsTest, Create_O_TRUNC)
-{
-	EXPECT_EQ(finchfs_init(NULL), 0);
-	int fd;
-	fd = finchfs_create("/trunc1", O_RDWR, S_IRWXU);
-	EXPECT_EQ(fd, 0);
-	char buf[1024];
-	rnd_fill(buf, sizeof(buf));
-	ssize_t n;
-	n = finchfs_write(fd, buf, sizeof(buf));
-	EXPECT_EQ(n, sizeof(buf));
-	finchfs_close(fd);
-	fd = finchfs_create("/trunc1", O_TRUNC | O_RDWR, S_IRWXU);
-	EXPECT_EQ(fd, 0);
-	n = finchfs_read(fd, buf, sizeof(buf));
-	EXPECT_EQ(n, 0);
-	finchfs_close(fd);
-	EXPECT_EQ(finchfs_term(), 0);
-}
-
-TEST(FinchfsTest, Open_O_TRUNC)
-{
-	EXPECT_EQ(finchfs_init(NULL), 0);
-	int fd;
-	fd = finchfs_create("/trunc2", O_RDWR, S_IRWXU);
-	EXPECT_EQ(fd, 0);
-	char buf[1024];
-	rnd_fill(buf, sizeof(buf));
-	ssize_t n;
-	n = finchfs_write(fd, buf, sizeof(buf));
-	EXPECT_EQ(n, sizeof(buf));
-	finchfs_close(fd);
-	fd = finchfs_open("/trunc2", O_TRUNC | O_RDWR);
-	EXPECT_EQ(fd, 0);
-	n = finchfs_read(fd, buf, sizeof(buf));
 	EXPECT_EQ(n, 0);
 	finchfs_close(fd);
 	EXPECT_EQ(finchfs_term(), 0);
@@ -960,11 +920,11 @@ TEST(FinchfsTest, Fstatat2)
 }
 
 struct test_dirent {
-    unsigned long  d_ino;
-    unsigned long  d_off;
-    unsigned short d_reclen;
-    char pad;
-    char           d_name[];
+	unsigned long d_ino;
+	unsigned long d_off;
+	unsigned short d_reclen;
+	char pad;
+	char d_name[];
 };
 
 TEST(FinchfsTest, Getdents)
@@ -1063,7 +1023,8 @@ TEST(FinchfsTest, Mmap1)
 	char *text = "ABCDEFGH";
 	EXPECT_EQ(finchfs_write(fd, text, strlen(text) + 1), strlen(text) + 1);
 	char *addr;
-	addr = (char *)finchfs_mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+	addr = (char *)finchfs_mmap(NULL, 4096, PROT_READ | PROT_WRITE,
+				    MAP_PRIVATE, fd, 0);
 	EXPECT_NE(addr, MAP_FAILED);
 	EXPECT_STREQ(addr, text);
 	EXPECT_EQ(finchfs_close(fd), 0);

@@ -7,49 +7,47 @@
 #include <time.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <lmdb.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "finchfs.h"
 #include "fs_types.h"
 #include "fs_rpc.h"
-#include "tree.h"
 #include "fs.h"
 #include "log.h"
 #include "find.h"
+#include "config.h"
 
-struct entry;
-RB_HEAD(entrytree, entry);
-struct entry {
-	char *name;
+struct dentry_key {
+	uint64_t i_ino;
+	char name[64];
+};
+typedef struct dentry_key dentry_key_t;
+
+struct inode {
 	mode_t mode;
 	size_t chunk_size;
 	uint64_t i_ino;
 	struct timespec mtime;
 	struct timespec ctime;
 	size_t size;
-	uint32_t ref_count;
-	uint32_t ref_w_count;
-	RB_ENTRY(entry) link;
-	struct entrytree entries;
+	uint32_t i_count;
+	uint32_t i_nlink;
 };
 
-typedef struct entry entry_t;
-
-static int
-entry_compare(entry_t *a, entry_t *b)
-{
-	return strcmp(a->name, b->name);
-}
-
-RB_GENERATE(entrytree, entry, link, entry_compare);
+typedef struct inode inode_t;
 
 struct worker_ctx {
 	int rank;
 	int nprocs;
-	uint64_t i_ino;
+	uint64_t *i_ino;
 	ucp_context_h ucp_context;
 	ucp_worker_h ucp_worker;
 	int *shutdown;
-	entry_t root;
 	struct fs_ctx *fs;
+	struct inode *inodes;
+	MDB_env *mdb_env;
+	MDB_dbi dbi;
 } ctx;
 
 typedef struct {
@@ -74,106 +72,130 @@ typedef struct {
 static inline uint64_t
 alloc_ino(struct worker_ctx *ctx)
 {
-	uint64_t i_ino = ctx->i_ino;
-	ctx->i_ino += ctx->nprocs;
+	uint64_t i_ino = *ctx->i_ino;
+	*ctx->i_ino += ctx->nprocs;
 	return (i_ino);
 }
 
-static void
-free_meta_tree(entry_t *entry)
-{
-	if (S_ISDIR(entry->mode)) {
-		entry_t *n;
-		while (1) {
-			n = RB_MIN(entrytree, &entry->entries);
-			if (n == NULL) {
-				break;
-			}
-			free_meta_tree(n);
-			RB_REMOVE(entrytree, &entry->entries, n);
-			if (n->ref_count == 0) {
-				free(n->name);
-				free(n);
-			} else {
-				free(n->name);
-				n->name = NULL;
-			}
-		}
-	}
-}
-
-static inline entry_t *
+static inline inode_t *
 get_parent_and_filename(uint64_t base, char *filename, const char *path,
 			struct worker_ctx *ctx)
 {
-	entry_t *e = (base == 0) ? &ctx->root : (entry_t *)base;
+	inode_t *e = (base == 0) ? &ctx->inodes[0] : (inode_t *)base;
+	MDB_txn *txn;
+	MDB_val key, data;
 	char *prev = (char *)path;
 	char *p = prev;
 	int path_len = strlen(path) + 1;
-	char name[128];
+	dentry_key_t dkey;
+	if (mdb_txn_begin(ctx->mdb_env, NULL, MDB_RDONLY, &txn)) {
+		log_error(
+		    "get_parent_and_filename() mdb_txn_begin() failed: %s",
+		    strerror(errno));
+		return (NULL);
+	}
+	dkey.i_ino = e->i_ino;
+	key.mv_data = &dkey;
+	key.mv_size = sizeof(dentry_key_t);
+
 	while ((p = strchr(p, '/')) != NULL) {
-		memcpy(name, prev, p - prev);
-		name[p - prev] = '\0';
+		memcpy(dkey.name, prev, p - prev);
+		for (int i = p - prev; i < sizeof(dkey.name); i++)
+			dkey.name[i] = '\0';
+		log_debug("get_parent_and_filename(): looking up '%s'",
+			  dkey.name);
 		prev = ++p;
-		e = RB_FIND(entrytree, &e->entries, &(entry_t){.name = name});
-		if (e == NULL) {
+		if (!mdb_get(txn, ctx->dbi, &key, &data))
+			dkey.i_ino = *(uint64_t *)data.mv_data;
+		else {
 			log_error(
 			    "get_parent_and_filename() path=%s does not exist",
 			    path);
-			return (NULL);
+			e = NULL;
+			goto out;
 		}
+		e = &ctx->inodes[dkey.i_ino / ctx->nprocs];
 		if (!S_ISDIR(e->mode)) {
 			log_error("get_parent_and_filename() path=%s is not a "
 				  "directory",
 				  path);
-			return (NULL);
+			e = NULL;
+			goto out;
 		}
 	}
-	memcpy(filename, prev, path_len - (prev - path));
-	filename[path_len - (prev - path)] = '\0';
+	size_t final_len = strlen(prev);
+	memcpy(filename, prev, final_len);
+	filename[final_len] = '\0';
+out:
+	mdb_txn_abort(txn);
 	return (e);
 }
 
-static inline entry_t *
+static inline inode_t *
 get_dir_entry(uint64_t base, const char *path, struct worker_ctx *ctx)
 {
-	entry_t *e = (base == 0) ? &ctx->root : (entry_t *)base;
+	inode_t *e = (base == 0) ? &ctx->inodes[0] : (inode_t *)base;
+	MDB_txn *txn;
+	MDB_val key, data;
+	dentry_key_t dkey;
 	if (strcmp(path, "") == 0) {
 		return (e);
 	}
 	char *prev = (char *)path;
 	char *p = prev;
 	int path_len = strlen(path) + 1;
-	char name[128];
+	if (mdb_txn_begin(ctx->mdb_env, NULL, MDB_RDONLY, &txn)) {
+		log_error(
+		    "get_parent_and_filename() mdb_txn_begin() failed: %s",
+		    strerror(errno));
+		return (NULL);
+	}
+
+	dkey.i_ino = e->i_ino;
+	key.mv_data = &dkey;
+	key.mv_size = sizeof(dentry_key_t);
 	while ((p = strchr(p, '/')) != NULL) {
-		memcpy(name, prev, p - prev);
-		name[p - prev] = '\0';
+		memcpy(dkey.name, prev, p - prev);
+		for (int i = p - prev; i < sizeof(dkey.name); i++)
+			dkey.name[i] = '\0';
 		prev = ++p;
-		e = RB_FIND(entrytree, &e->entries, &(entry_t){.name = name});
-		if (e == NULL) {
+		if (!mdb_get(txn, ctx->dbi, &key, &data))
+			dkey.i_ino = *(uint64_t *)data.mv_data;
+		else {
 			log_error("get_dir() path=%s does not exist", path);
 			errno = ENOENT;
-			return (NULL);
+			e = NULL;
+			goto out;
 		}
+		e = &ctx->inodes[dkey.i_ino / ctx->nprocs];
 		if (!S_ISDIR(e->mode)) {
 			log_error("get_dir() path=%s is not a directory", path);
 			errno = ENOTDIR;
-			return (NULL);
+			e = NULL;
+			goto out;
 		}
 	}
-	memcpy(name, prev, path_len - (prev - path));
-	name[path_len - (prev - path)] = '\0';
-	e = RB_FIND(entrytree, &e->entries, &(entry_t){.name = name});
-	if (e == NULL) {
+	size_t final_len = strlen(prev);
+	memcpy(dkey.name, prev, final_len);
+	for (int i = final_len; i < sizeof(dkey.name); i++)
+		dkey.name[i] = '\0';
+	if (!mdb_get(txn, ctx->dbi, &key, &data))
+		dkey.i_ino = *(uint64_t *)data.mv_data;
+	else {
 		log_error("get_dir() path=%s does not exist", path);
 		errno = ENOENT;
-		return (NULL);
+		e = NULL;
+		goto out;
 	}
+	e = &ctx->inodes[dkey.i_ino / ctx->nprocs];
 	if (!S_ISDIR(e->mode)) {
 		log_error("get_dir() path=%s is not a directory", path);
 		errno = ENOTDIR;
-		return (NULL);
+		e = NULL;
+		goto out;
 	}
+out:
+	mdb_txn_abort(txn);
 	return (e);
 }
 
@@ -267,35 +289,55 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[0].length = sizeof(int);
 
 	char dirname[128];
-	entry_t *parent = get_parent_and_filename(base, dirname, path, &ctx);
+	inode_t *parent = get_parent_and_filename(base, dirname, path, &ctx);
 
 	if (parent == NULL) {
 		log_debug("fs_rpc_mkdir_recv() parent path=%s does not exist",
 			  path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		entry_t *newent = malloc(sizeof(entry_t));
-		newent->name = strdup(dirname);
-		entry_t *ent = RB_INSERT(entrytree, &parent->entries, newent);
-		if (ent != NULL) {
-			log_debug("fs_rpc_mkdir_recv() path=%s already exists",
-				  path);
-			free(newent->name);
-			free(newent);
+		dentry_key_t dkey;
+		MDB_txn *txn;
+		MDB_val key, data;
+		dkey.i_ino = parent->i_ino;
+		key.mv_data = &dkey;
+		key.mv_size = sizeof(dentry_key_t);
+		memcpy(dkey.name, dirname, strlen(dirname) + 1);
+		for (int i = strlen(dirname) + 1; i < sizeof(dkey.name); i++)
+			dkey.name[i] = '\0';
+		if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
+			log_error("get_parent_and_filename() mdb_txn_begin() "
+				  "failed: %s",
+				  strerror(errno));
+			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
+			goto out;
+		}
+
+		if (!mdb_get(txn, ctx.dbi, &key, &data)) {
+			dkey.i_ino = *(uint64_t *)data.mv_data;
 			*(int *)(user_data->iov[0].buffer) = FINCH_EEXIST;
 		} else {
-			log_debug("fs_rpc_mkdir_recv() create path=%s", path);
-			newent->mode = mode;
-			newent->chunk_size = 0;
-			newent->i_ino = alloc_ino(&ctx);
-			newent->ref_count = 0;
-			timespec_get(&newent->mtime, TIME_UTC);
-			timespec_get(&newent->ctime, TIME_UTC);
-			newent->entries.rbh_root = NULL;
+			uint64_t ino = alloc_ino(&ctx);
+			inode_t *new_inode = &ctx.inodes[ino / ctx.nprocs];
+			data.mv_data = &ino;
+			data.mv_size = sizeof(uint64_t);
+			int rc = mdb_put(txn, ctx.dbi, &key, &data, 0);
+			log_debug("fs_rpc_mkdir_recv() create path=%s "
+				  "inode=%lu rc=%d",
+				  path, ino, rc);
+			new_inode->i_ino = ino;
+			new_inode->mode = mode;
+			new_inode->chunk_size = 0;
+			new_inode->size = 0;
+			new_inode->i_count = 0;
+			new_inode->i_nlink = 1;
+			timespec_get(&new_inode->mtime, TIME_UTC);
+			timespec_get(&new_inode->ctime, TIME_UTC);
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		}
+		mdb_txn_commit(txn);
 	}
-
+out:
 	ucs_status_t status;
 	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
 			      header_length);
@@ -338,55 +380,64 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[2].length = sizeof(void *);
 
 	char filename[128];
-	entry_t *parent = get_parent_and_filename(base, filename, path, &ctx);
+	inode_t *parent = get_parent_and_filename(base, filename, path, &ctx);
+
 	if (parent == NULL) {
-		log_debug("fs_rpc_inode_create_recv() path=%s does not exist",
-			  path);
+		log_debug(
+		    "fs_rpc_inode_create_recv() parent path=%s does not exist",
+		    path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		entry_t *ent = NULL;
-		entry_t *newent = malloc(sizeof(entry_t));
-		newent->name = strdup(filename);
-		ent = RB_INSERT(entrytree, &parent->entries, newent);
+		dentry_key_t dkey;
+		MDB_txn *txn;
+		MDB_val key, data;
+		dkey.i_ino = parent->i_ino;
+		key.mv_data = &dkey;
+		key.mv_size = sizeof(dentry_key_t);
+		memcpy(dkey.name, filename, strlen(filename) + 1);
+		for (int i = strlen(filename) + 1; i < sizeof(dkey.name); i++)
+			dkey.name[i] = '\0';
+		if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
+			log_error("fs_rpc_inode_create_recv() mdb_txn_begin() "
+				  "failed: %s",
+				  strerror(errno));
+			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
+			goto out;
+		}
 
-		if (ent != NULL) {
-			free(newent->name);
-			free(newent);
-			if (((flags >> 2) & 1) && ent->size > 0) {
-				ent->ref_count = 0;
-				ent->ref_w_count = 0;
-				ent->i_ino = alloc_ino(&ctx);
-				ent->size = 0;
-				timespec_get(&ent->mtime, TIME_UTC);
-			}
-			ent->ref_count++;
-			if ((flags & O_RDWR) || (flags & O_WRONLY)) {
-				ent->ref_w_count++;
-			}
-			*(uint64_t *)(user_data->iov[1].buffer) = ent->i_ino;
-			*(void **)(user_data->iov[2].buffer) = ent;
+		if (!mdb_get(txn, ctx.dbi, &key, &data)) {
+			// Entry already exists
+			uint64_t ino = *(uint64_t *)data.mv_data;
+			inode_t *inode = &ctx.inodes[ino / ctx.nprocs];
+			inode->i_count++;
+			*(uint64_t *)(user_data->iov[1].buffer) = inode->i_ino;
+			*(void **)(user_data->iov[2].buffer) = inode;
 		} else {
-			newent->i_ino = alloc_ino(&ctx);
-			newent->size = 0;
+			// Create new entry
+			uint64_t ino = alloc_ino(&ctx);
+			inode_t *new_inode = &ctx.inodes[ino / ctx.nprocs];
+			data.mv_data = &ino;
+			data.mv_size = sizeof(uint64_t);
+			mdb_put(txn, ctx.dbi, &key, &data, 0);
+			new_inode->i_ino = ino;
+			new_inode->mode = mode;
+			new_inode->chunk_size = chunk_size;
+			new_inode->size = 0;
+			new_inode->i_count = 1;
+			new_inode->i_nlink = 1;
+			timespec_get(&new_inode->mtime, TIME_UTC);
+			timespec_get(&new_inode->ctime, TIME_UTC);
 			log_debug("fs_rpc_inode_create_recv() create path=%s "
 				  "inode=%lu",
-				  path, newent->i_ino);
-			newent->mode = mode;
-			newent->chunk_size = chunk_size;
-			timespec_get(&newent->mtime, TIME_UTC);
-			timespec_get(&newent->ctime, TIME_UTC);
-			newent->ref_count = 1;
-			if ((flags & O_RDWR) || (flags & O_WRONLY)) {
-				newent->ref_w_count = 1;
-			} else {
-				newent->ref_w_count = 0;
-			}
-			*(uint64_t *)(user_data->iov[1].buffer) = newent->i_ino;
-			*(void **)(user_data->iov[2].buffer) = newent;
+				  path, new_inode->i_ino);
+			*(uint64_t *)(user_data->iov[1].buffer) =
+			    new_inode->i_ino;
+			*(void **)(user_data->iov[2].buffer) = new_inode;
 		}
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+		mdb_txn_commit(txn);
 	}
-
+out:
 	ucs_status_t status;
 	status = post_iov_req(param->reply_ep, RPC_INODE_REP, user_data,
 			      header_length);
@@ -407,44 +458,52 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 
 	log_debug("fs_rpc_inode_unlink_recv() called path=%s", path);
 
-	iov_req_t *user_data =
-	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
+	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
 	user_data->header = malloc(header_length);
 	memcpy(user_data->header, header, header_length);
 	user_data->n = 1;
 	user_data->iov[0].buffer = malloc(sizeof(int));
 	user_data->iov[0].length = sizeof(int);
 
-	char name[128];
-	entry_t *parent = get_parent_and_filename(base, name, path, &ctx);
+	char filename[128];
+	inode_t *parent = get_parent_and_filename(base, filename, path, &ctx);
+
 	if (parent == NULL) {
-		log_debug("fs_rpc_inode_unlink_recv() path=%s does not exist",
-			  path);
+		log_debug(
+		    "fs_rpc_inode_unlink_recv() parent path=%s does not exist",
+		    path);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		entry_t key = {
-		    .name = name,
-		};
-		entry_t *ent = RB_FIND(entrytree, &parent->entries, &key);
-		if (ent == NULL) {
+		dentry_key_t dkey;
+		MDB_txn *txn;
+		MDB_val key, data;
+		dkey.i_ino = parent->i_ino;
+		key.mv_data = &dkey;
+		key.mv_size = sizeof(dentry_key_t);
+		memcpy(dkey.name, filename, strlen(filename) + 1);
+		for (int i = strlen(filename) + 1; i < sizeof(dkey.name); i++)
+			dkey.name[i] = '\0';
+		if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
+			log_error("fs_rpc_inode_unlink_recv() mdb_txn_begin() "
+				  "failed: %s",
+				  strerror(errno));
+			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
+			goto out;
+		}
+
+		if (!mdb_get(txn, ctx.dbi, &key, &data)) {
+			// Entry exists, remove it
+			mdb_del(txn, ctx.dbi, &key, NULL);
+			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+		} else {
 			log_debug(
 			    "fs_rpc_inode_unlink_recv() path=%s does not exist",
 			    path);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
-		} else {
-			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-			free_meta_tree(ent);
-			RB_REMOVE(entrytree, &parent->entries, ent);
-			if (ent->ref_count == 0) {
-				free(ent->name);
-				free(ent);
-			} else {
-				free(ent->name);
-				ent->name = NULL;
-			}
 		}
+		mdb_txn_commit(txn);
 	}
-
+out:
 	ucs_status_t status;
 	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
 			      header_length);
@@ -480,87 +539,70 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 	user_data->iov[1].length = sizeof(fs_stat_t);
 
 	fs_stat_t *st = (fs_stat_t *)user_data->iov[1].buffer;
-	if (open >> 4 & 1) {
-		entry_t *ent = get_dir_entry(base, path, &ctx);
-		if (ent == NULL) {
+
+	char filename[128];
+	inode_t *parent = get_parent_and_filename(base, filename, path, &ctx);
+
+	if (parent == NULL) {
+		log_debug(
+		    "fs_rpc_inode_stat_recv() parent path=%s does not exist",
+		    path);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else if (strcmp(filename, "") == 0) {
+		inode_t *inode = (base == 0) ? &ctx.inodes[0] : (inode_t *)base;
+		st->chunk_size = inode->chunk_size;
+		st->i_ino = inode->i_ino;
+		st->mode = inode->mode;
+		st->mtime = inode->mtime;
+		st->ctime = inode->ctime;
+		st->size = inode->size;
+		memcpy(&st->eid, &inode, sizeof(inode));
+		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+		if (open & 1) {
+			inode->i_count++;
+		}
+	} else {
+		dentry_key_t dkey;
+		MDB_txn *txn;
+		MDB_val key, data;
+		dkey.i_ino = parent->i_ino;
+		key.mv_data = &dkey;
+		key.mv_size = sizeof(dentry_key_t);
+		memcpy(dkey.name, filename, strlen(filename) + 1);
+		for (int i = strlen(filename) + 1; i < sizeof(dkey.name); i++)
+			dkey.name[i] = '\0';
+		if (mdb_txn_begin(ctx.mdb_env, NULL, MDB_RDONLY, &txn)) {
+			log_error("fs_rpc_inode_stat_recv() mdb_txn_begin() "
+				  "failed: %s",
+				  strerror(errno));
+			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
+			goto out;
+		}
+
+		if (!mdb_get(txn, ctx.dbi, &key, &data)) {
+			uint64_t ino = *(uint64_t *)data.mv_data;
+			inode_t *inode = &ctx.inodes[ino / ctx.nprocs];
+
+			st->chunk_size = inode->chunk_size;
+			st->i_ino = inode->i_ino;
+			st->mode = inode->mode;
+			st->mtime = inode->mtime;
+			st->ctime = inode->ctime;
+			st->size = inode->size;
+			memcpy(&st->eid, &inode, sizeof(inode));
+			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+			if (open & 1) {
+				inode->i_count++;
+			}
+		} else {
 			log_debug(
 			    "fs_rpc_inode_stat_recv() path=%s does not exist",
 			    path);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
-		} else {
-			st->chunk_size = ent->chunk_size;
-			st->i_ino = ent->i_ino;
-			st->mode = ent->mode;
-			st->mtime = ent->mtime;
-			st->ctime = ent->ctime;
-			st->size = ent->size;
-			memcpy(&st->eid, &ent, sizeof(ent));
-			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		}
-	} else {
-		char name[128];
-		entry_t *parent =
-		    get_parent_and_filename(base, name, path, &ctx);
-		if (parent == NULL) {
-			log_debug("fs_rpc_inode_stat_recv() path=%s "
-				  "does not exist",
-				  path);
-			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
-		} else {
-			entry_t key = {
-			    .name = name,
-			};
-			entry_t *ent =
-			    RB_FIND(entrytree, &parent->entries, &key);
-			if (strcmp(name, "") == 0) {
-				ent = base == 0 ? &ctx.root : (entry_t *)base;
-				st->chunk_size = ent->chunk_size;
-				st->i_ino = ent->i_ino;
-				st->mode = ent->mode;
-				st->mtime = ent->mtime;
-				st->ctime = ent->ctime;
-				st->size = ent->size;
-				memcpy(&st->eid, &ent, sizeof(ent));
-				*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-				if (open) {
-					ent->ref_count++;
-				}
-				if (((open >> 1) & O_RDWR) ||
-				    ((open >> 1) & O_WRONLY)) {
-					ent->ref_w_count++;
-				}
-			} else if (ent == NULL) {
-				log_debug("fs_rpc_inode_stat_recv() path=%s "
-					  "does not exist",
-					  path);
-				*(int *)(user_data->iov[0].buffer) =
-				    FINCH_ENOENT;
-			} else {
-				if (((open >> 3) & 1) && ent->size > 0) {
-					ent->i_ino = alloc_ino(&ctx);
-					ent->size = 0;
-					ent->ref_count = 0;
-					ent->ref_w_count = 0;
-				}
-				st->chunk_size = ent->chunk_size;
-				st->i_ino = ent->i_ino;
-				st->mode = ent->mode;
-				st->mtime = ent->mtime;
-				st->ctime = ent->ctime;
-				st->size = ent->size;
-				memcpy(&st->eid, &ent, sizeof(ent));
-				*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-				if (open) {
-					ent->ref_count++;
-				}
-				if (((open >> 1) & O_RDWR) ||
-				    ((open >> 1) & O_WRONLY)) {
-					ent->ref_w_count++;
-				}
-			}
-		}
+		mdb_txn_abort(txn);
 	}
-
+out:
 	ucs_status_t status;
 	status = post_iov_req(param->reply_ep, RPC_INODE_STAT_REP, user_data,
 			      header_length);
@@ -572,10 +614,10 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 			      size_t header_length, void *data, size_t length,
 			      const ucp_am_recv_param_t *param)
 {
-	entry_t *eid;
+	inode_t *eid;
 	size_t ssize;
 	char *p = (char *)data;
-	eid = *(entry_t **)p;
+	eid = *(inode_t **)p;
 	p += sizeof(eid);
 	ssize = *(size_t *)p;
 
@@ -583,19 +625,14 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 		  ssize >> 3);
 
 	if (ssize & 1) {
-		eid->ref_count--;
-		if (((ssize >> 1) & O_RDWR) || ((ssize >> 1) & O_WRONLY)) {
-			eid->ref_w_count--;
+		// Close operation: decrement reference count
+		eid->i_count--;
+		if (eid->size < (ssize >> 3)) {
+			eid->size = ssize >> 3;
 		}
-		if (eid->ref_count == 0 && eid->name == NULL) {
-			free(eid);
-		} else {
-			if (eid->size < (ssize >> 3)) {
-				eid->size = ssize >> 3;
-			}
-			timespec_get(&eid->mtime, TIME_UTC);
-		}
+		timespec_get(&eid->mtime, TIME_UTC);
 	} else {
+		// Fsync operation: update size and return current size
 		if (eid->size < (ssize >> 3)) {
 			eid->size = ssize >> 3;
 		}
@@ -811,7 +848,7 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 	rhdr->entry_count = 0;
 	user_data->n = 0;
 
-	entry_t *dir = get_dir_entry(0, path, &ctx);
+	inode_t *dir = get_dir_entry(0, path, &ctx);
 	ucs_status_t status;
 	if (dir == NULL) {
 		if (errno == ENOENT) {
@@ -832,27 +869,54 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 				      user_data, header_length);
 		return (status);
 	}
-	entry_t *child;
-	RB_FOREACH(child, entrytree, &dir->entries)
-	{
+	MDB_cursor *cur;
+	MDB_txn *txn;
+	MDB_val k, v;
+	if (mdb_txn_begin(ctx.mdb_env, NULL, MDB_RDONLY, &txn)) {
+		log_error("fs_rpc_readdir_recv() mdb_txn_begin() failed: %s",
+			  strerror(errno));
+		return (UCS_ERR_NO_RESOURCE);
+	}
+	if (mdb_cursor_open(txn, ctx.dbi, &cur)) {
+		log_error("fs_rpc_readdir_recv() mdb_cursor_open() failed: %s",
+			  strerror(errno));
+		mdb_txn_abort(txn);
+		return (UCS_ERR_NO_RESOURCE);
+	}
+	dentry_key_t dkey;
+	dkey.i_ino = dir->i_ino;
+	for (int i = 0; i < sizeof(dkey.name); i++)
+		dkey.name[i] = '\0';
+	k.mv_data = &dkey;
+	k.mv_size = sizeof(dentry_key_t);
+	int rc = mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE);
+	while (rc == 0) {
+		dentry_key_t *dk = (dentry_key_t *)k.mv_data;
+		if (dk->i_ino != dir->i_ino)
+			break;
+		inode_t *child =
+		    &ctx.inodes[(*(uint64_t *)v.mv_data) / ctx.nprocs];
+
 		if (rhdr->fileonly && S_ISDIR(child->mode)) {
+			rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
 			continue;
 		}
 		readdir_entry_t *ent =
-		    malloc(sizeof(readdir_entry_t) + strlen(child->name) + 1);
+		    malloc(sizeof(readdir_entry_t) + strlen(dk->name) + 1);
 		ent->chunk_size = child->chunk_size;
 		ent->i_ino = child->i_ino;
 		ent->mode = child->mode;
 		ent->mtime = child->mtime;
 		ent->ctime = child->ctime;
 		ent->size = child->size;
-		ent->path_len = strlen(child->name) + 1;
-		strcpy(ent->path, child->name);
+		ent->path_len = strlen(dk->name) + 1;
+		strcpy(ent->path, dk->name);
 		user_data->iov[user_data->n].buffer = ent;
 		user_data->iov[user_data->n].length =
 		    sizeof(readdir_entry_t) + ent->path_len;
 		user_data->n++;
 		rhdr->entry_count++;
+		rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
 		if (user_data->n == hdr->entry_count) {
 			rhdr->ret = FINCH_INPROGRESS;
 			log_debug("fs_rpc_readdir_recv() sending count=%d",
@@ -873,6 +937,8 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 			user_data->n = 0;
 		}
 	}
+	mdb_cursor_close(cur);
+	mdb_txn_abort(txn);
 	if (user_data->n == 0) {
 		user_data->iov[user_data->n].buffer = malloc(1);
 		user_data->iov[user_data->n].length = 1;
@@ -901,7 +967,7 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 	p += sizeof(uint64_t);
 	npath = (char *)p;
 
-	log_debug("fs_rpc_dir_move_recv() called opath=%s npath=%s", opath,
+	log_debug("fs_rpc_rename_recv() called opath=%s npath=%s", opath,
 		  npath);
 
 	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
@@ -913,47 +979,82 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 
 	char oname[128];
 	char nname[128];
-	entry_t *oparent = get_parent_and_filename(oldbase, oname, opath, &ctx);
-	entry_t *nparent = get_parent_and_filename(newbase, nname, npath, &ctx);
+	inode_t *oparent = get_parent_and_filename(oldbase, oname, opath, &ctx);
+	inode_t *nparent = get_parent_and_filename(newbase, nname, npath, &ctx);
 
 	if (oparent == NULL) {
-		log_debug("fs_rpc_dir_move_recv() opath=%s does not exist",
-			  opath);
+		log_debug(
+		    "fs_rpc_rename_recv() old parent path=%s does not exist",
+		    opath);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else if (nparent == NULL) {
-		log_debug("fs_rpc_dir_move_recv() npath=%s does not exist",
-			  npath);
+		log_debug(
+		    "fs_rpc_rename_recv() new parent path=%s does not exist",
+		    npath);
 		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
 	} else {
-		entry_t key = {
-		    .name = oname,
-		};
-		entry_t *ent = RB_FIND(entrytree, &oparent->entries, &key);
-		if (ent == NULL) {
+		dentry_key_t old_dkey, new_dkey;
+		MDB_txn *txn;
+		MDB_val old_key, new_key, val;
+
+		// Setup old dentry key
+		old_dkey.i_ino = oparent->i_ino;
+		memcpy(old_dkey.name, oname, strlen(oname) + 1);
+		for (int i = strlen(oname) + 1; i < sizeof(old_dkey.name); i++)
+			old_dkey.name[i] = '\0';
+		old_key.mv_data = &old_dkey;
+		old_key.mv_size = sizeof(dentry_key_t);
+
+		// Setup new dentry key
+		new_dkey.i_ino = nparent->i_ino;
+		memcpy(new_dkey.name, nname, strlen(nname) + 1);
+		for (int i = strlen(nname) + 1; i < sizeof(new_dkey.name); i++)
+			new_dkey.name[i] = '\0';
+		new_key.mv_data = &new_dkey;
+		new_key.mv_size = sizeof(dentry_key_t);
+
+		if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
+			log_error("fs_rpc_rename_recv() mdb_txn_begin() "
+				  "failed: %s",
+				  strerror(errno));
+			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
+			goto out;
+		}
+
+		// Look up the old entry
+		if (mdb_get(txn, ctx.dbi, &old_key, &val)) {
 			log_debug(
-			    "fs_rpc_dir_move_recv() opath=%s does not exist",
+			    "fs_rpc_rename_recv() opath=%s does not exist",
 			    opath);
 			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+			mdb_txn_abort(txn);
 		} else {
-			entry_t *old;
-			RB_REMOVE(entrytree, &oparent->entries, ent);
-			free(ent->name);
-			ent->name = strdup(nname);
-			old = RB_INSERT(entrytree, &nparent->entries, ent);
-			if (old != NULL) {
-				RB_REMOVE(entrytree, &nparent->entries, old);
-				free(old->name);
-				old->name = NULL;
-				if (old->ref_count == 0) {
-					free_meta_tree(old);
-					free(old);
-				}
-				RB_INSERT(entrytree, &nparent->entries, ent);
+			uint64_t ino = *(uint64_t *)val.mv_data;
+
+			// Check if destination exists and delete it
+			MDB_val old_val;
+			if (!mdb_get(txn, ctx.dbi, &new_key, &old_val)) {
+				// Destination exists, delete it
+				uint64_t old_ino = *(uint64_t *)old_val.mv_data;
+				inode_t *old_inode =
+				    &ctx.inodes[old_ino / ctx.nprocs];
+				old_inode->i_nlink--;
+				mdb_del(txn, ctx.dbi, &new_key, NULL);
 			}
+
+			// Delete old dentry
+			mdb_del(txn, ctx.dbi, &old_key, NULL);
+
+			// Create new dentry
+			val.mv_data = &ino;
+			val.mv_size = sizeof(uint64_t);
+			mdb_put(txn, ctx.dbi, &new_key, &val, 0);
+
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+			mdb_txn_commit(txn);
 		}
 	}
-
+out:
 	ucs_status_t status;
 	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
 			      header_length);
@@ -972,16 +1073,58 @@ typedef struct {
 } find_param_t;
 
 static void
-fs_rpc_find_internal(iov_req_t **user_data, entry_t *dir, find_param_t *param)
+fs_rpc_find_internal(MDB_txn *txn, iov_req_t **user_data, inode_t *dir,
+		     find_param_t *param)
 {
-	log_debug("fs_rpc_find_internal() called dir->name=%s", dir->name);
-	entry_t *child;
+	log_debug("fs_rpc_find_internal() called dir i_ino=%lu", dir->i_ino);
 	ucs_status_t status;
 
-	RB_FOREACH(child, entrytree, &dir->entries)
-	{
+	MDB_cursor *cur;
+	if (mdb_cursor_open(txn, ctx.dbi, &cur)) {
+		log_error("fs_rpc_find_internal() mdb_cursor_open() failed: %s",
+			  strerror(errno));
+		return;
+	}
+
+	dentry_key_t dkey;
+	dkey.i_ino = dir->i_ino;
+	for (int i = 0; i < sizeof(dkey.name); i++)
+		dkey.name[i] = '\0';
+	MDB_val k, v;
+	k.mv_data = &dkey;
+	k.mv_size = sizeof(dentry_key_t);
+
+	int rc = mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE);
+
+	while (rc == 0) {
+		dentry_key_t *dk = (dentry_key_t *)k.mv_data;
+		if (dk->i_ino != dir->i_ino)
+			break;
+
+		inode_t *child =
+		    &ctx.inodes[(*(uint64_t *)v.mv_data) / ctx.nprocs];
+
 		if (param->recursive && S_ISDIR(child->mode)) {
-			fs_rpc_find_internal(user_data, child, param);
+			mdb_cursor_close(cur);
+			fs_rpc_find_internal(txn, user_data, child, param);
+			if (mdb_cursor_open(txn, ctx.dbi, &cur)) {
+				log_error("fs_rpc_find_internal() "
+					  "mdb_cursor_open() failed: %s",
+					  strerror(errno));
+				return;
+			}
+			dkey.i_ino = dir->i_ino;
+			memcpy(dkey.name, dk->name, sizeof(dkey.name));
+			k.mv_data = &dkey;
+			k.mv_size = sizeof(dentry_key_t);
+			rc = mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE);
+			if (rc != 0)
+				break;
+			dk = (dentry_key_t *)k.mv_data;
+			if (dk->i_ino != dir->i_ino)
+				break;
+			child =
+			    &ctx.inodes[(*(uint64_t *)v.mv_data) / ctx.nprocs];
 		}
 		fs_stat_t st = {
 		    .chunk_size = child->chunk_size,
@@ -993,18 +1136,20 @@ fs_rpc_find_internal(iov_req_t **user_data, entry_t *dir, find_param_t *param)
 		};
 		find_header_t *rhdr = (find_header_t *)(*user_data)->header;
 		if (param->skip_dir && S_ISDIR(child->mode)) {
+			rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
 			continue;
 		}
 		rhdr->total_nentries++;
-		if (!eval_condition(param->cond, child->name, &st)) {
+		if (!eval_condition(param->cond, dk->name, &st)) {
+			rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
 			continue;
 		}
 		rhdr->match_nentries++;
 		if (param->return_path) {
-			find_entry_t *ent = malloc(sizeof(find_entry_t) +
-						   strlen(child->name) + 1);
-			ent->path_len = strlen(child->name) + 1;
-			strcpy(ent->path, child->name);
+			find_entry_t *ent =
+			    malloc(sizeof(find_entry_t) + strlen(dk->name) + 1);
+			ent->path_len = strlen(dk->name) + 1;
+			strcpy(ent->path, dk->name);
 			(*user_data)->iov[(*user_data)->n].buffer = ent;
 			(*user_data)->iov[(*user_data)->n].length =
 			    sizeof(find_entry_t) + ent->path_len;
@@ -1036,7 +1181,9 @@ fs_rpc_find_internal(iov_req_t **user_data, entry_t *dir, find_param_t *param)
 				(*user_data)->n = 0;
 			}
 		}
+		rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
 	}
+	mdb_cursor_close(cur);
 }
 
 ucs_status_t
@@ -1070,7 +1217,7 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 	rhdr->match_nentries = 0;
 	user_data->n = 0;
 
-	entry_t *dir = get_dir_entry(0, path, &ctx);
+	inode_t *dir = get_dir_entry(0, path, &ctx);
 	ucs_status_t status;
 	if (dir == NULL) {
 		if (errno == ENOENT) {
@@ -1112,9 +1259,21 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 	    .header_length = header_length,
 	    .reply_ep = param->reply_ep,
 	};
-	fs_rpc_find_internal(&user_data, dir, &fparam);
+	MDB_txn *txn;
+	if (mdb_txn_begin(ctx.mdb_env, NULL, MDB_RDONLY, &txn)) {
+		log_error("fs_rpc_find_recv() mdb_txn_begin() failed: %s",
+			  strerror(errno));
+		rhdr->ret = FINCH_EIO;
+		user_data->iov[user_data->n].buffer = malloc(1);
+		user_data->iov[user_data->n].length = 1;
+		user_data->n++;
+		status = post_iov_req(param->reply_ep, RPC_FIND_REP, user_data,
+				      header_length);
+		return (status);
+	}
+	fs_rpc_find_internal(txn, &user_data, dir, &fparam);
+	mdb_txn_abort(txn);
 	if (!fparam.skip_dir) {
-		rhdr->total_nentries++;
 		fs_stat_t st = {
 		    .chunk_size = dir->chunk_size,
 		    .i_ino = dir->i_ino,
@@ -1123,15 +1282,21 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 		    .ctime = dir->ctime,
 		    .size = dir->size,
 		};
+		char *name = path;
+		for (char *p = name; *p != '\0'; p++) {
+			if (*p == '/')
+				name = p + 1;
+		}
 		rhdr = (find_header_t *)user_data->header;
-		if (eval_condition(fparam.cond, dir->name, &st)) {
+		log_debug("find_recv name='%s'", name);
+		rhdr->total_nentries++;
+		if (eval_condition(fparam.cond, name, &st)) {
 			rhdr->match_nentries++;
 			if (fparam.return_path) {
-				find_entry_t *ent =
-				    malloc(sizeof(find_entry_t) +
-					   strlen(dir->name) + 1);
-				ent->path_len = strlen(dir->name) + 1;
-				strcpy(ent->path, dir->name);
+				find_entry_t *ent = malloc(
+				    sizeof(find_entry_t) + strlen(name) + 1);
+				ent->path_len = strlen(name) + 1;
+				strcpy(ent->path, name);
 				user_data->iov[user_data->n].buffer = ent;
 				user_data->iov[user_data->n].length =
 				    sizeof(find_entry_t) + ent->path_len;
@@ -1146,6 +1311,9 @@ fs_rpc_find_recv(void *arg, const void *header, size_t header_length,
 		user_data->iov[user_data->n].length = 1;
 		user_data->n++;
 	}
+	log_debug("total_nentries=%zu match_nentries=%zu",
+		  ((find_header_t *)(user_data->header))->total_nentries,
+		  ((find_header_t *)(user_data->header))->match_nentries);
 	log_debug("fs_rpc_find_recv() sending count=%d",
 		  ((find_header_t *)user_data->header)->entry_count);
 	status = post_iov_req(param->reply_ep, RPC_FIND_REP, user_data,
@@ -1189,38 +1357,81 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 	    .user_data = user_data,
 	};
 
-	entry_t *dir = (entry_t *)eid;
-	entry_t *child = (hdr->pos == 0)
-			     ? entrytree_RB_MINMAX(&dir->entries, -1)
-			     : ((entry_t *)hdr->pos);
+	inode_t *dir = (inode_t *)eid;
 	rhdr->ret = FINCH_ENOENT;
 	rhdr->count = 0;
 	rhdr->pos = 0;
+
+	MDB_cursor *cur;
+	MDB_txn *txn;
+	MDB_val k, v;
+	if (mdb_txn_begin(ctx.mdb_env, NULL, MDB_RDONLY, &txn)) {
+		log_error("fs_rpc_getdents_recv() mdb_txn_begin() failed: %s",
+			  strerror(errno));
+		rhdr->ret = FINCH_EIO;
+		goto out;
+	}
+	if (mdb_cursor_open(txn, ctx.dbi, &cur)) {
+		log_error("fs_rpc_getdents_recv() mdb_cursor_open() failed: %s",
+			  strerror(errno));
+		mdb_txn_abort(txn);
+		rhdr->ret = FINCH_EIO;
+		goto out;
+	}
+
+	dentry_key_t dkey;
+	int rc;
+	dkey.i_ino = dir->i_ino;
+	if (hdr->pos == 0) {
+		for (int i = 0; i < sizeof(dkey.name); i++)
+			dkey.name[i] = '\0';
+		k.mv_data = &dkey;
+		k.mv_size = sizeof(dentry_key_t);
+
+		rc = mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE);
+	} else {
+		cur = (MDB_cursor *)hdr->pos;
+		rc = mdb_cursor_get(cur, &k, &v, MDB_GET_CURRENT);
+	}
+
 	struct finchfs_dirent *ent = NULL;
-	for (; (child) != ((void *)0); (child) = entrytree_RB_NEXT(child)) {
+	while (rc == 0) {
+		dentry_key_t *dk = (dentry_key_t *)k.mv_data;
+		if (dk->i_ino != dir->i_ino)
+			break;
+
+		inode_t *child =
+		    &ctx.inodes[(*(uint64_t *)v.mv_data) / ctx.nprocs];
+
 		if (S_ISDIR(child->mode) && ctx.rank != 0) {
+			rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
 			continue;
 		}
+
+		size_t name_len = strlen(dk->name) + 1;
 		ent = (struct finchfs_dirent *)(user_data->buf + rhdr->count);
-		if (rhdr->count + sizeof(struct finchfs_dirent) +
-			strlen(child->name) + 1 >
+		if (rhdr->count + sizeof(struct finchfs_dirent) + name_len >
 		    hdr->count) {
 			rhdr->ret = FINCH_INPROGRESS;
-			rhdr->pos = (uint64_t)child;
+			rhdr->pos = (uint64_t)cur;
 			break;
 		}
 		rhdr->ret = FINCH_OK;
-		rhdr->count +=
-		    sizeof(struct finchfs_dirent) + strlen(child->name) + 1;
+		rhdr->count += sizeof(struct finchfs_dirent) + name_len;
 		ent->d_ino = child->i_ino;
 		ent->d_off = rhdr->count;
-		ent->d_reclen =
-		    sizeof(struct finchfs_dirent) + strlen(child->name) + 1;
-		strcpy(ent->d_name, child->name);
+		ent->d_reclen = sizeof(struct finchfs_dirent) + name_len;
+		strcpy(ent->d_name, dk->name);
+		rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
 	}
 	if (ent != NULL) {
 		ent->d_off = 0;
 	}
+
+	mdb_cursor_close(cur);
+	mdb_txn_abort(txn);
+
+out:
 	log_debug("fs_rpc_getdents_recv() sending count=%d", rhdr->count);
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
@@ -1249,16 +1460,7 @@ fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 {
 	ctx.rank = rank;
 	ctx.nprocs = nprocs;
-	ctx.i_ino = rank + nprocs;
 	ctx.shutdown = shutdown;
-
-	ctx.root.name = "";
-	ctx.root.mode = S_IFDIR | S_IRWXU;
-	ctx.root.chunk_size = 0;
-	ctx.root.i_ino = 0;
-	timespec_get(&ctx.root.mtime, TIME_UTC);
-	timespec_get(&ctx.root.ctime, TIME_UTC);
-	ctx.root.entries.rbh_root = NULL;
 
 	ucs_status_t status;
 	ucp_params_t ucp_params = {
@@ -1426,6 +1628,62 @@ fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 	}
 
 	ctx.fs = fs_inode_init(db_dir);
+
+	char inode_path[128];
+	snprintf(inode_path, sizeof(inode_path), "%s/inodes.db", db_dir);
+	int fd = open(inode_path, O_RDWR | O_CREAT, 0666);
+	if (fd < 0) {
+		log_fatal("fs_server_init() open(%s) failed: %s", inode_path,
+			  strerror(errno));
+	}
+	size_t inode_file_size = sizeof(inode_t) * MAX_INODES;
+	if (ftruncate(fd, inode_file_size + sizeof(uint64_t)) < 0) {
+		log_fatal("fs_server_init() ftruncate(%s) failed: %s",
+			  inode_path, strerror(errno));
+	}
+	ctx.inodes = mmap(NULL, inode_file_size, PROT_READ | PROT_WRITE,
+			  MAP_SHARED, fd, 0);
+	if (ctx.inodes == MAP_FAILED) {
+		log_fatal("fs_server_init() mmap(%s) failed: %s", inode_path,
+			  strerror(errno));
+	}
+
+	ctx.inodes[0].i_ino = 0;
+	ctx.inodes[0].mode = S_IFDIR | S_IRWXU;
+	ctx.inodes[0].chunk_size = 0;
+	ctx.inodes[0].size = 0;
+	ctx.inodes[0].i_count = 0;
+	ctx.inodes[0].i_nlink = 1;
+	timespec_get(&ctx.inodes[0].mtime, TIME_UTC);
+	timespec_get(&ctx.inodes[0].ctime, TIME_UTC);
+	close(fd);
+	ctx.i_ino = (uint64_t *)&ctx.inodes[MAX_INODES];
+	if (*ctx.i_ino == 0) {
+		*ctx.i_ino = rank + nprocs;
+	}
+
+	mdb_env_create(&ctx.mdb_env);
+	mdb_env_set_maxdbs(ctx.mdb_env, 1);
+	mdb_env_set_mapsize(ctx.mdb_env, 1ULL << 33);
+	char mdb_path[128];
+	snprintf(mdb_path, sizeof(mdb_path), ".");
+	if (mdb_env_open(ctx.mdb_env, mdb_path, 0, 0666)) {
+		log_fatal("fs_server_init() mdb_env_open(%s) failed: %s",
+			  mdb_path, strerror(errno));
+	}
+	MDB_txn *txn;
+	if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
+		log_fatal("fs_server_init() mdb_txn_begin() failed: %s",
+			  strerror(errno));
+	}
+	if (mdb_dbi_open(txn, "dentry", MDB_CREATE, &ctx.dbi)) {
+		log_fatal("fs_server_init() mdb_dbi_open() failed: %s",
+			  strerror(errno));
+	}
+	if (mdb_txn_commit(txn)) {
+		log_fatal("fs_server_init() mdb_txn_commit() failed: %s",
+			  strerror(errno));
+	}
 	return (0);
 }
 
@@ -1451,7 +1709,8 @@ fs_server_release_address(void *addr)
 int
 fs_server_term(int trank)
 {
-	free_meta_tree(&ctx.root);
+	mdb_dbi_close(ctx.mdb_env, ctx.dbi);
+	mdb_env_close(ctx.mdb_env);
 	ucp_worker_destroy(ctx.ucp_worker);
 	ucp_cleanup(ctx.ucp_context);
 	fs_inode_term(ctx.fs);

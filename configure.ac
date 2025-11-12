@@ -16,6 +16,7 @@ LT_INIT
 # Checks for libraries.
 PKG_CHECK_MODULES([MPI], [ompi])
 PKG_CHECK_MODULES([UCX], [ucx])
+PKG_CHECK_MODULES([LMDB], [lmdb])
 
 AC_ARG_ENABLE([mmap],
   [AS_HELP_STRING([--enable-mmap], [Enable mmap support])],
@@ -51,6 +52,7 @@ AC_FUNC_REALLOC
 AC_CHECK_FUNCS([fcntl.h stdlib.h string.h syslog.h unistd.h])
 
 AC_DEFINE([DUMP_ADDR_FILE], ["/tmp/finchfsd"], [File path to dump address to])
+AC_DEFINE([MAX_INODES], [10000000], [max number of inodes per proc])
 
 AC_CONFIG_FILES([Makefile lib/Makefile finchfsd/Makefile pkgconfig/finchfs.pc pkgconfig/Makefile client/Makefile client/finchrun])
 AC_OUTPUT
