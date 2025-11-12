@@ -25,7 +25,7 @@ jobs:
     - name: Set up dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y autoconf automake libtool make gcc g++ libopenmpi-dev libucx-dev libgtest-dev binutils-dev
+        sudo apt-get install -y autoconf automake libtool make gcc g++ libopenmpi-dev libucx-dev libgtest-dev binutils-dev liblmdb-dev
 
     - name: Run autoreconf
       run: autoreconf -i
