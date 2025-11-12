@@ -492,7 +492,9 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 		}
 
 		if (!mdb_get(txn, ctx.dbi, &key, &data)) {
-			// Entry exists, remove it
+			uint64_t ino = *(uint64_t *)data.mv_data;
+			inode_t *inode = &ctx.inodes[ino / ctx.nprocs];
+			inode->i_nlink--;
 			mdb_del(txn, ctx.dbi, &key, NULL);
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		} else {
