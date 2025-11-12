@@ -13,8 +13,7 @@ FINCHFS is a user-level parallel ad hoc file system, so it has the following fea
 FINCHFS also has the following features:
 
 * It is not a POSIX-compliant file system. It does not support file locking, file truncate, etc.
-* FINCHFS has two backends, pmemkv backend and POSIX backend.
-* FINCHFS use node-local storage. For pmemkv backend, FINCHFS uses Intel Optane Persistent Memory via pmemkv. For POSIX backend, FINCHFS uses NVMe SSD via POSIX API.
+* FINCHFS uses NVMe SSD via POSIX API.
 
 .. image:: images/arch.png
     :width: 100%

@@ -53,8 +53,8 @@ int fs_rpc_getdents(int target, uint64_t *eid, uint64_t *pos, void *buf,
 int fs_client_init(char *addrfile, int *nvprocs);
 int fs_client_term(void);
 
-int fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs,
-		   int lrank, int lnprocs, int *shutdown);
+int fs_server_init(char *db_dir, int rank, int nprocs, int lrank, int lnprocs,
+		   int *shutdown);
 int fs_server_get_address(void **addr, size_t *addr_len);
 void fs_server_release_address(void *addr);
 int fs_server_term();

@@ -8,7 +8,6 @@ Run finchfsd
 ``finchfsd`` starts with MPI. The finchfsd options are the following.
 
 * ``-c db_dir`` : specifies a database directory or a DAX device. If the directory does not exist, it will be created.
-* ``-s db_size`` : specifies a database size. This option is only effective when using the pmemkv and fsdax. Default is 1 GiB.
 * ``-v log_level`` : specifies the log level (e.g. debug). Default is info.
 
 An example of a script is the following.
@@ -18,18 +17,9 @@ An example of a script is the following.
     NUM_NODES=10
     NUM_CLIENTS=$((NUM_NODES * 24)) # ppn is 24
     FINCHFSD_PPN=8
-    FINCH_DB_SIZE=$((1024 * 1024 * 1024 * 1024)) # 1 TiB
     export UCX_NUM_EPS=$NUM_CLIENTS
-    mpirun -np $((NUM_NODES*FINCHFSD_PPN)) -hostfile /path/to/hostfile --map-by ppr:$FINCHFSD_PPN:node:PE=1 -x UCX_NUM_EPS finchfsd -d /scr -s $FINCH_DB_SIZE -v debug &
+    mpirun -np $((NUM_NODES*FINCHFSD_PPN)) -hostfile /path/to/hostfile --map-by ppr:$FINCHFSD_PPN:node:PE=1 -x UCX_NUM_EPS finchfsd -d /scr -v debug &
     sleep 5 # wait for finchfsd to start
-
-When we use pmemkv backend with devdax mode, 
-we need to create namespaces for the number of threads, by `ndctl <https://docs.pmem.io/ndctl-user-guide/ndctl-man-pages/ndctl-create-namespace>`_.
-We specify the ``-c /dev/dax0.%d`` option to ``finchfsd``, then ``finchfsd`` use ``/dev/dax0.0``, ``/dev/dax0.1``, ..., ``/dev/dax0.$((NUM_THREADS - 1))``.
-
-.. code-block:: bash
-
-    mpirun -np $((NUM_NODES*FINCHFSD_PPN)) --map-by ppr:$FINCHFSD_PPN:node:PE=1 -x UCX_NUM_EPS finchfsd -c /dev/dax0.%d -s $FINCH_DB_SIZE -v debug &
 
 ``/tmp/finchfsd`` is the `address file` and generated on the compute node where finchfsd is started.
 FINCHFS client library connect to finchfsd by the address file.

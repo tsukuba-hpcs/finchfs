@@ -22,7 +22,6 @@ typedef struct {
 	MPI_Comm lcomm;
 	int shutdown;
 	char *db_dir;
-	size_t db_size;
 } finchfsd_ctx_t;
 
 static sigset_t sigset;
@@ -91,20 +90,16 @@ main(int argc, char **argv)
 	finchfsd_ctx_t ctx = {
 	    .shutdown = 0,
 	    .db_dir = "/tmp/finch_data",
-	    .db_size = 1024 * 1024 * 1024,
 	};
 	pthread_t handler_thread;
 	int c;
-	while ((c = getopt(argc, argv, "d:v:s:")) != -1) {
+	while ((c = getopt(argc, argv, "d:v:")) != -1) {
 		switch (c) {
 		case 'd':
 			ctx.db_dir = strdup(optarg);
 			break;
 		case 'v':
 			log_set_level(optarg);
-			break;
-		case 's':
-			ctx.db_size = atol(optarg);
 			break;
 		default:
 			log_fatal("Unknown option %c", c);
@@ -130,8 +125,8 @@ main(int argc, char **argv)
 	MPI_Comm_rank(ctx.lcomm, &ctx.lrank);
 	MPI_Comm_size(ctx.lcomm, &ctx.lnprocs);
 
-	if (fs_server_init(ctx.db_dir, ctx.db_size, ctx.rank, ctx.nprocs,
-			   ctx.lrank, ctx.lnprocs, &ctx.shutdown)) {
+	if (fs_server_init(ctx.db_dir, ctx.rank, ctx.nprocs, ctx.lrank,
+			   ctx.lnprocs, &ctx.shutdown)) {
 		log_fatal("fs_server_init() failed");
 		return (-1);
 	}

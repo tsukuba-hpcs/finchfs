@@ -1247,8 +1247,8 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 }
 
 int
-fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int lrank,
-	       int lnprocs, int *shutdown)
+fs_server_init(char *db_dir, int rank, int nprocs, int lrank, int lnprocs,
+	       int *shutdown)
 {
 	ctx.rank = rank;
 	ctx.nprocs = nprocs;
@@ -1430,7 +1430,7 @@ fs_server_init(char *db_dir, size_t db_size, int rank, int nprocs, int lrank,
 		return (-1);
 	}
 
-	ctx.fs = fs_inode_init(db_dir, db_size, lrank);
+	ctx.fs = fs_inode_init(db_dir, lrank);
 	return (0);
 }
 
