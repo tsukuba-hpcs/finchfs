@@ -999,7 +999,6 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 		MDB_txn *txn;
 		MDB_val old_key, new_key, val;
 
-		// Setup old dentry key
 		old_dkey.i_ino = oparent->i_ino;
 		memcpy(old_dkey.name, oname, strlen(oname) + 1);
 		for (int i = strlen(oname) + 1; i < sizeof(old_dkey.name); i++)
@@ -1007,7 +1006,6 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 		old_key.mv_data = &old_dkey;
 		old_key.mv_size = sizeof(dentry_key_t);
 
-		// Setup new dentry key
 		new_dkey.i_ino = nparent->i_ino;
 		memcpy(new_dkey.name, nname, strlen(nname) + 1);
 		for (int i = strlen(nname) + 1; i < sizeof(new_dkey.name); i++)
@@ -1023,7 +1021,6 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 			goto out;
 		}
 
-		// Look up the old entry
 		if (mdb_get(txn, ctx.dbi, &old_key, &val)) {
 			log_debug(
 			    "fs_rpc_rename_recv() opath=%s does not exist",
@@ -1033,10 +1030,8 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 		} else {
 			uint64_t ino = *(uint64_t *)val.mv_data;
 
-			// Check if destination exists and delete it
 			MDB_val old_val;
 			if (!mdb_get(txn, ctx.dbi, &new_key, &old_val)) {
-				// Destination exists, delete it
 				uint64_t old_ino = *(uint64_t *)old_val.mv_data;
 				inode_t *old_inode =
 				    &ctx.inodes[old_ino / ctx.nprocs];
@@ -1044,16 +1039,127 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 				mdb_del(txn, ctx.dbi, &new_key, NULL);
 			}
 
-			// Delete old dentry
 			mdb_del(txn, ctx.dbi, &old_key, NULL);
 
-			// Create new dentry
 			val.mv_data = &ino;
 			val.mv_size = sizeof(uint64_t);
 			mdb_put(txn, ctx.dbi, &new_key, &val, 0);
 
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 			mdb_txn_commit(txn);
+		}
+	}
+out:
+	ucs_status_t status;
+	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+			      header_length);
+	return (status);
+}
+
+ucs_status_t
+fs_rpc_inode_link_recv(void *arg, const void *header, size_t header_length,
+		       void *data, size_t length,
+		       const ucp_am_recv_param_t *param)
+{
+	uint64_t oldbase;
+	char *opath;
+	uint64_t newbase;
+	char *npath;
+	uint8_t isdir;
+	char *p = (char *)data;
+	oldbase = *(uint64_t *)p;
+	p += sizeof(uint64_t);
+	opath = (char *)p;
+	p += strlen(opath) + 1;
+	newbase = *(uint64_t *)p;
+	p += sizeof(uint64_t);
+	npath = (char *)p;
+	p += strlen(npath) + 1;
+	isdir = *(uint8_t *)p;
+
+	log_debug("fs_rpc_link_recv() called opath=%s npath=%s isdir=%d", opath,
+		  npath, isdir);
+
+	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	user_data->n = 1;
+	user_data->iov[0].buffer = malloc(sizeof(int));
+	user_data->iov[0].length = sizeof(int);
+
+	char oname[128];
+	char nname[128];
+	inode_t *oparent = get_parent_and_filename(oldbase, oname, opath, &ctx);
+	inode_t *nparent = get_parent_and_filename(newbase, nname, npath, &ctx);
+
+	if (oparent == NULL) {
+		log_debug(
+		    "fs_rpc_link_recv() old parent path=%s does not exist",
+		    opath);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else if (nparent == NULL) {
+		log_debug(
+		    "fs_rpc_link_recv() new parent path=%s does not exist",
+		    npath);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else {
+		dentry_key_t old_dkey, new_dkey;
+		MDB_txn *txn;
+		MDB_val old_key, new_key, val;
+
+		old_dkey.i_ino = oparent->i_ino;
+		memcpy(old_dkey.name, oname, strlen(oname) + 1);
+		for (int i = strlen(oname) + 1; i < sizeof(old_dkey.name); i++)
+			old_dkey.name[i] = '\0';
+		old_key.mv_data = &old_dkey;
+		old_key.mv_size = sizeof(dentry_key_t);
+
+		new_dkey.i_ino = nparent->i_ino;
+		memcpy(new_dkey.name, nname, strlen(nname) + 1);
+		for (int i = strlen(nname) + 1; i < sizeof(new_dkey.name); i++)
+			new_dkey.name[i] = '\0';
+		new_key.mv_data = &new_dkey;
+		new_key.mv_size = sizeof(dentry_key_t);
+
+		if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
+			log_error("fs_rpc_link_recv() mdb_txn_begin() "
+				  "failed: %s",
+				  strerror(errno));
+			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
+			goto out;
+		}
+
+		if (mdb_get(txn, ctx.dbi, &old_key, &val)) {
+			log_debug("fs_rpc_link_recv() opath=%s does not exist",
+				  opath);
+			*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+			mdb_txn_abort(txn);
+			goto out;
+		} else {
+			uint64_t ino = *(uint64_t *)val.mv_data;
+			inode_t *inode = &ctx.inodes[ino / ctx.nprocs];
+			if (!isdir && S_ISDIR(inode->mode)) {
+				log_debug("fs_rpc_link_recv() hard link "
+					  "to directory not allowed");
+				*(int *)(user_data->iov[0].buffer) =
+				    FINCH_EISDIR;
+				mdb_txn_abort(txn);
+				goto out;
+			} else if (isdir && !S_ISDIR(inode->mode)) {
+				log_debug("fs_rpc_link_recv() link type "
+					  "mismatch");
+				*(int *)(user_data->iov[0].buffer) =
+				    FINCH_ENOTDIR;
+				mdb_txn_abort(txn);
+				goto out;
+			}
+			val.mv_data = &ino;
+			val.mv_size = sizeof(uint64_t);
+			mdb_put(txn, ctx.dbi, &new_key, &val, 0);
+			inode->i_nlink++;
+			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+			mdb_txn_commit(txn);
+			goto out;
 		}
 	}
 out:
@@ -1625,6 +1731,19 @@ fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 	if ((status = ucp_worker_set_am_recv_handler(
 		 ctx.ucp_worker, &getdents_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(getdents) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t link_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_INODE_LINK_REQ,
+	    .cb = fs_rpc_inode_link_recv,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(ctx.ucp_worker,
+						     &link_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(link) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}

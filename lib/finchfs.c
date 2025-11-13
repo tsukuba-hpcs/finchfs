@@ -773,6 +773,31 @@ finchfs_rename(const char *oldpath, const char *newpath)
 }
 
 int
+finchfs_link(const char *oldpath, const char *newpath)
+{
+	int ret;
+	char *oldp, *newp;
+	log_debug("finchfs_link() called oldpath=%s newpath=%s", oldpath,
+		  newpath);
+	oldp = canonical_path(oldpath);
+	newp = canonical_path(newpath);
+	ret = fs_rpc_file_link(NULL, oldp, NULL, newp);
+	if (ret) {
+		if (errno == ENOTSUP || errno == EISDIR) {
+			ret = fs_rpc_dir_link(NULL, oldp, NULL, newp);
+		}
+	}
+	if (ret) {
+		free(oldp);
+		free(newp);
+		return (-1);
+	}
+	free(oldp);
+	free(newp);
+	return (0);
+}
+
+int
 finchfs_find(const char *path, const char *query,
 	     struct finchfs_find_param *param, void *buf,
 	     void (*filler)(void *, const char *))

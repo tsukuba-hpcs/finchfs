@@ -21,6 +21,7 @@ int finchfs_fstat(int fd, struct stat *st);
 int finchfs_readdir(const char *path, void *buf,
 		    void (*filler)(void *, const char *, const struct stat *));
 int finchfs_rename(const char *oldpath, const char *newpath);
+int finchfs_link(const char *oldpath, const char *newpath);
 typedef enum {
 	FINCHFS_FIND_FLAG_RECURSIVE = (1 << 0),
 	FINCHFS_FIND_FLAG_RETURN_PATH = (1 << 1),

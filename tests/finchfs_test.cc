@@ -1040,6 +1040,33 @@ TEST(FinchfsTest, Root)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, LinkFile)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int fd;
+	fd = finchfs_create("/linkfile1", O_RDWR, S_IRWXU);
+	EXPECT_EQ(fd, 0);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_link("/linkfile1", "/linkfile2"), 0);
+	struct stat st1, st2;
+	EXPECT_EQ(finchfs_stat("/linkfile1", &st1), 0);
+	EXPECT_EQ(finchfs_stat("/linkfile2", &st2), 0);
+	EXPECT_EQ(st1.st_ino, st2.st_ino);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, LinkDir)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/linkdir1", S_IRWXU), 0);
+	EXPECT_EQ(finchfs_link("/linkdir1", "/linkdir2"), 0);
+	struct stat st1, st2;
+	EXPECT_EQ(finchfs_stat("/linkdir1", &st1), 0);
+	EXPECT_EQ(finchfs_stat("/linkdir2", &st2), 0);
+	EXPECT_EQ(st1.st_ino, st2.st_ino);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 static int
 path_to_target_hash(const char *path, int div)
 {

@@ -18,6 +18,7 @@
 #define RPC_FIND_REP 0x12
 #define RPC_GETDENTS_REQ 0x13
 #define RPC_GETDENTS_REP 0x14
+#define RPC_INODE_LINK_REQ 0x15
 
 int fs_rpc_mkdir(uint64_t *base, const char *path, mode_t mode);
 int fs_rpc_inode_create(uint64_t *base, const char *path, uint8_t flags,
@@ -44,6 +45,10 @@ int fs_rpc_dir_rename(uint64_t *oldbase, const char *oldpath, uint64_t *newbase,
 		      const char *newpath);
 int fs_rpc_file_rename(uint64_t *oldbase, const char *oldpath,
 		       uint64_t *newbase, const char *newpath);
+int fs_rpc_dir_link(uint64_t *oldbase, const char *oldpath, uint64_t *newbase,
+		    const char *newpath);
+int fs_rpc_file_link(uint64_t *oldbase, const char *oldpath, uint64_t *newbase,
+		     const char *newpath);
 int fs_rpc_find(const char *path, const char *query,
 		struct finchfs_find_param *param, void *arg,
 		void (*filler)(void *, const char *));
