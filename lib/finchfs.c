@@ -1030,7 +1030,6 @@ finchfs_renameat(int olddirfd, const char *oldpath, int newdirfd,
 	uint64_t *oldeid, *neweid;
 	int ret;
 	char *oldp, *newp;
-	fs_stat_t st;
 	log_debug("finchfs_renameat() called olddirfd=%d oldpath=%s "
 		  "newdirfd=%d newpath=%s",
 		  olddirfd, oldpath, newdirfd, newpath);
@@ -1054,23 +1053,20 @@ finchfs_renameat(int olddirfd, const char *oldpath, int newdirfd,
 	}
 	oldp = canonical_path(oldpath);
 	newp = canonical_path(newpath);
-	ret = fs_rpc_inode_stat(oldeid, oldp, &st, 0);
+	ret = fs_rpc_file_rename(oldeid, oldp, neweid, newp);
+	if (ret) {
+		if (errno == ENOTSUP || errno == EISDIR) {
+			ret = fs_rpc_dir_rename(oldeid, oldp, neweid, newp);
+		}
+	}
 	if (ret) {
 		free(oldp);
 		free(newp);
 		return (-1);
 	}
-	if (S_ISDIR(st.mode)) {
-		ret = fs_rpc_dir_rename(oldeid, oldp, neweid, newp);
-		free(oldp);
-		free(newp);
-		return (ret);
-	} else {
-		ret = fs_rpc_file_rename(oldeid, oldp, neweid, newp);
-		free(oldp);
-		free(newp);
-		return (ret);
-	}
+	free(oldp);
+	free(newp);
+	return (0);
 }
 
 int
