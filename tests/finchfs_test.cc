@@ -1014,6 +1014,46 @@ TEST(FinchfsTest, Renameat2)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+TEST(FinchfsTest, Linkat1)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/linkat", 0777), 0);
+	int dirfd;
+	dirfd = finchfs_open("/linkat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	EXPECT_EQ(finchfs_mkdirat(dirfd, "childdir1", 0777), 0);
+	EXPECT_EQ(finchfs_linkat(dirfd, "childdir1", dirfd, "childdir2"), 0);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	struct stat st1, st2;
+	EXPECT_EQ(finchfs_stat("/linkat/childdir1", &st1), 0);
+	EXPECT_EQ(finchfs_stat("/linkat/childdir2", &st2), 0);
+	EXPECT_EQ(st1.st_ino, st2.st_ino);
+	EXPECT_EQ(st1.st_nlink, 2);
+	EXPECT_EQ(st2.st_nlink, 2);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Linkat2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	int dirfd;
+	dirfd = finchfs_open("/linkat", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	int fd;
+	fd = finchfs_createat(dirfd, "childfile1", O_RDWR | O_CREAT, S_IRWXU);
+	EXPECT_EQ(fd, 1);
+	EXPECT_EQ(finchfs_close(fd), 0);
+	EXPECT_EQ(finchfs_linkat(dirfd, "childfile1", dirfd, "childfile2"), 0);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	struct stat st1, st2;
+	EXPECT_EQ(finchfs_stat("/linkat/childfile1", &st1), 0);
+	EXPECT_EQ(finchfs_stat("/linkat/childfile2", &st2), 0);
+	EXPECT_EQ(st1.st_ino, st2.st_ino);
+	EXPECT_EQ(st1.st_nlink, 2);
+	EXPECT_EQ(st2.st_nlink, 2);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 TEST(FinchfsTest, Mmap1)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);

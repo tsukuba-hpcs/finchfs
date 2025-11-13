@@ -1073,6 +1073,52 @@ finchfs_renameat(int olddirfd, const char *oldpath, int newdirfd,
 	}
 }
 
+int
+finchfs_linkat(int olddirfd, const char *oldpath, int newdirfd,
+	       const char *newpath)
+{
+	uint64_t *oldeid, *neweid;
+	int ret;
+	char *oldp, *newp;
+	log_debug("finchfs_linkat() called olddirfd=%d oldpath=%s "
+		  "newdirfd=%d newpath=%s",
+		  olddirfd, oldpath, newdirfd, newpath);
+	if (olddirfd == AT_FDCWD) {
+		oldeid = NULL;
+	} else if (olddirfd < 0 || olddirfd >= fd_table_size ||
+		   fd_table[olddirfd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	} else {
+		oldeid = fd_table[olddirfd].eid;
+	}
+	if (newdirfd == AT_FDCWD) {
+		neweid = NULL;
+	} else if (newdirfd < 0 || newdirfd >= fd_table_size ||
+		   fd_table[newdirfd].path == NULL) {
+		errno = EBADF;
+		return (-1);
+	} else {
+		neweid = fd_table[newdirfd].eid;
+	}
+	oldp = canonical_path(oldpath);
+	newp = canonical_path(newpath);
+	ret = fs_rpc_file_link(oldeid, oldp, neweid, newp);
+	if (ret) {
+		if (errno == ENOTSUP || errno == EISDIR) {
+			ret = fs_rpc_dir_link(oldeid, oldp, neweid, newp);
+		}
+	}
+	if (ret) {
+		free(oldp);
+		free(newp);
+		return (-1);
+	}
+	free(oldp);
+	free(newp);
+	return (0);
+}
+
 ssize_t
 finchfs_getdents(int fd, void *dirp, size_t count)
 {
