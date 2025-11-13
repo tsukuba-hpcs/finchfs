@@ -39,6 +39,7 @@ static struct fd_table {
 	struct timespec mtime;
 	struct timespec ctime;
 	uint64_t *eid;
+	uint32_t nlink;
 	struct {
 		int rank;
 		uint64_t pos;
@@ -391,6 +392,7 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].size = st.size;
 	fd_table[fd].mtime = st.mtime;
 	fd_table[fd].ctime = st.ctime;
+	fd_table[fd].nlink = st.nlink;
 	log_debug("finchfs_open() called path=%s inode=%d chunk_size=%zu", path,
 		  st.i_ino, st.chunk_size);
 	return (fd);
@@ -701,7 +703,7 @@ finchfs_stat(const char *path, struct stat *st)
 	st->st_size = fst.size;
 	st->st_mtim = fst.mtime;
 	st->st_ctim = fst.ctime;
-	st->st_nlink = 1;
+	st->st_nlink = fst.nlink;
 	st->st_ino = fst.i_ino;
 	st->st_blksize = fst.chunk_size;
 	st->st_blocks = NUM_BLOCKS(fst.size);
@@ -723,7 +725,7 @@ finchfs_fstat(int fd, struct stat *st)
 	st->st_size = fd_table[fd].size;
 	st->st_mtim = fd_table[fd].mtime;
 	st->st_ctim = fd_table[fd].ctime;
-	st->st_nlink = 1;
+	st->st_nlink = fd_table[fd].nlink;
 	st->st_ino = fd_table[fd].i_ino;
 	st->st_blksize = fd_table[fd].chunk_size;
 	st->st_blocks = NUM_BLOCKS(fd_table[fd].size);

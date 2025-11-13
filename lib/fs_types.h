@@ -5,6 +5,7 @@ typedef struct {
 	mode_t mode;
 	struct timespec mtime, ctime;
 	size_t size;
+	uint32_t nlink;
 } fs_stat_t;
 
 typedef struct {

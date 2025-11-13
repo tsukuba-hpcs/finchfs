@@ -558,6 +558,7 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 		st->mtime = inode->mtime;
 		st->ctime = inode->ctime;
 		st->size = inode->size;
+		st->nlink = inode->i_nlink;
 		memcpy(&st->eid, &inode, sizeof(inode));
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		if (open & 1) {
