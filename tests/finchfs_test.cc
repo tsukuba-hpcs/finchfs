@@ -1052,6 +1052,8 @@ TEST(FinchfsTest, LinkFile)
 	EXPECT_EQ(finchfs_stat("/linkfile1", &st1), 0);
 	EXPECT_EQ(finchfs_stat("/linkfile2", &st2), 0);
 	EXPECT_EQ(st1.st_ino, st2.st_ino);
+	EXPECT_EQ(st1.st_nlink, 2);
+	EXPECT_EQ(st2.st_nlink, 2);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
@@ -1064,6 +1066,8 @@ TEST(FinchfsTest, LinkDir)
 	EXPECT_EQ(finchfs_stat("/linkdir1", &st1), 0);
 	EXPECT_EQ(finchfs_stat("/linkdir2", &st2), 0);
 	EXPECT_EQ(st1.st_ino, st2.st_ino);
+	EXPECT_EQ(st1.st_nlink, 2);
+	EXPECT_EQ(st2.st_nlink, 2);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
