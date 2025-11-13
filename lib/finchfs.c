@@ -750,28 +750,24 @@ finchfs_rename(const char *oldpath, const char *newpath)
 {
 	int ret;
 	char *oldp, *newp;
-	fs_stat_t st;
 	log_debug("finchfs_rename() called oldpath=%s newpath=%s", oldpath,
 		  newpath);
 	oldp = canonical_path(oldpath);
 	newp = canonical_path(newpath);
-	ret = fs_rpc_inode_stat(NULL, oldp, &st, 0);
+	ret = fs_rpc_file_rename(NULL, oldp, NULL, newp);
+	if (ret) {
+		if (errno == ENOTSUP || errno == EISDIR) {
+			ret = fs_rpc_dir_rename(NULL, oldp, NULL, newp);
+		}
+	}
 	if (ret) {
 		free(oldp);
 		free(newp);
 		return (-1);
 	}
-	if (S_ISDIR(st.mode)) {
-		ret = fs_rpc_dir_rename(NULL, oldp, NULL, newp);
-		free(oldp);
-		free(newp);
-		return (ret);
-	} else {
-		ret = fs_rpc_file_rename(NULL, oldp, NULL, newp);
-		free(oldp);
-		free(newp);
-		return (ret);
-	}
+	free(oldp);
+	free(newp);
+	return (0);
 }
 
 int

@@ -1544,20 +1544,23 @@ int
 fs_rpc_dir_rename(uint64_t *oldbase, const char *oldpath, uint64_t *newbase,
 		  const char *newpath)
 {
-	ucp_dt_iov_t *iov = malloc(sizeof(ucp_dt_iov_t) * 4 * env.nvprocs);
+	ucp_dt_iov_t *iov = malloc(sizeof(ucp_dt_iov_t) * 5 * env.nvprocs);
 	uint64_t zero = 0;
+	uint8_t isdir = 1;
 	int *ret = malloc(sizeof(int) * env.nvprocs);
 	int **rets_addr = malloc(sizeof(int *) * env.nvprocs);
 
 	for (int i = 0; i < env.nvprocs; i++) {
-		iov[i * 4].buffer = (oldbase == NULL) ? &zero : &oldbase[i];
-		iov[i * 4].length = sizeof(uint64_t);
-		iov[i * 4 + 1].buffer = (void *)oldpath;
-		iov[i * 4 + 1].length = strlen(oldpath) + 1;
-		iov[i * 4 + 2].buffer = (newbase == NULL) ? &zero : &newbase[i];
-		iov[i * 4 + 2].length = sizeof(uint64_t);
-		iov[i * 4 + 3].buffer = (void *)newpath;
-		iov[i * 4 + 3].length = strlen(newpath) + 1;
+		iov[i * 5].buffer = (oldbase == NULL) ? &zero : &oldbase[i];
+		iov[i * 5].length = sizeof(uint64_t);
+		iov[i * 5 + 1].buffer = (void *)oldpath;
+		iov[i * 5 + 1].length = strlen(oldpath) + 1;
+		iov[i * 5 + 2].buffer = (newbase == NULL) ? &zero : &newbase[i];
+		iov[i * 5 + 2].length = sizeof(uint64_t);
+		iov[i * 5 + 3].buffer = (void *)newpath;
+		iov[i * 5 + 3].length = strlen(newpath) + 1;
+		iov[i * 5 + 4].buffer = &isdir;
+		iov[i * 5 + 4].length = sizeof(isdir);
 		ret[i] = FINCH_INPROGRESS;
 		rets_addr[i] = &ret[i];
 	}
@@ -1573,7 +1576,7 @@ fs_rpc_dir_rename(uint64_t *oldbase, const char *oldpath, uint64_t *newbase,
 	for (int i = 0; i < env.nvprocs; i++) {
 		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_RENAME_REQ,
 					  &rets_addr[i], sizeof(void *),
-					  &iov[i * 4], 4, &rparam);
+					  &iov[i * 5], 5, &rparam);
 	}
 
 	ucs_status_t status;
@@ -1643,8 +1646,9 @@ fs_rpc_file_rename(uint64_t *oldbase, const char *oldpath, uint64_t *newbase,
 		errno = ENOTSUP;
 		return (-1);
 	}
-	ucp_dt_iov_t iov[4];
+	ucp_dt_iov_t iov[5];
 	uint64_t zero = 0;
+	uint8_t isdir = 0;
 	iov[0].buffer = (oldbase == NULL) ? &zero : &oldbase[otarget];
 	iov[0].length = sizeof(uint64_t);
 	iov[1].buffer = (void *)oldpath;
@@ -1653,6 +1657,8 @@ fs_rpc_file_rename(uint64_t *oldbase, const char *oldpath, uint64_t *newbase,
 	iov[2].length = sizeof(uint64_t);
 	iov[3].buffer = (void *)newpath;
 	iov[3].length = strlen(newpath) + 1;
+	iov[4].buffer = &isdir;
+	iov[4].length = sizeof(isdir);
 
 	int ret = FINCH_INPROGRESS;
 	int *ret_addr = &ret;
@@ -1666,7 +1672,7 @@ fs_rpc_file_rename(uint64_t *oldbase, const char *oldpath, uint64_t *newbase,
 
 	ucs_status_ptr_t req;
 	req = ucp_am_send_nbx(env.ucp_eps[otarget], RPC_RENAME_REQ, &ret_addr,
-			      sizeof(void *), iov, 4, &rparam);
+			      sizeof(void *), iov, 5, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {

@@ -962,6 +962,7 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 	char *opath;
 	uint64_t newbase;
 	char *npath;
+	uint8_t isdir;
 	char *p = (char *)data;
 	oldbase = *(uint64_t *)p;
 	p += sizeof(uint64_t);
@@ -970,6 +971,8 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 	newbase = *(uint64_t *)p;
 	p += sizeof(uint64_t);
 	npath = (char *)p;
+	p += strlen(npath) + 1;
+	isdir = *(uint8_t *)p;
 
 	log_debug("fs_rpc_rename_recv() called opath=%s npath=%s", opath,
 		  npath);
@@ -1031,7 +1034,22 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 			mdb_txn_abort(txn);
 		} else {
 			uint64_t ino = *(uint64_t *)val.mv_data;
-
+			mode_t mode = ctx.inodes[ino / ctx.nprocs].mode;
+			if (isdir && !S_ISDIR(mode)) {
+				log_debug("fs_rpc_rename_recv() target is "
+					  "not a directory");
+				*(int *)(user_data->iov[0].buffer) =
+				    FINCH_ENOTDIR;
+				mdb_txn_abort(txn);
+				goto out;
+			} else if (!isdir && S_ISDIR(mode)) {
+				log_debug("fs_rpc_rename_recv() target is a "
+					  "directory");
+				*(int *)(user_data->iov[0].buffer) =
+				    FINCH_EISDIR;
+				mdb_txn_abort(txn);
+				goto out;
+			}
 			MDB_val old_val;
 			if (!mdb_get(txn, ctx.dbi, &new_key, &old_val)) {
 				uint64_t old_ino = *(uint64_t *)old_val.mv_data;
