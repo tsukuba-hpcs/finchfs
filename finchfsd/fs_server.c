@@ -1770,8 +1770,18 @@ fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 
 	ctx.fs = fs_inode_init(db_dir);
 
+	char meta_dir[128];
+	snprintf(meta_dir, sizeof(meta_dir), "meta_%d", rank);
+
+	if (mkdir(meta_dir, 0777)) {
+		if (errno != EEXIST) {
+			log_fatal("fs_server_init() mkdir(%s) failed: %s",
+				  meta_dir, strerror(errno));
+		}
+	}
+
 	char inode_path[128];
-	snprintf(inode_path, sizeof(inode_path), "%s/inodes.db", db_dir);
+	snprintf(inode_path, sizeof(inode_path), "meta_%d/inodes.mmap", rank);
 	int fd = open(inode_path, O_RDWR | O_CREAT, 0666);
 	if (fd < 0) {
 		log_fatal("fs_server_init() open(%s) failed: %s", inode_path,
@@ -1806,11 +1816,9 @@ fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 	mdb_env_create(&ctx.mdb_env);
 	mdb_env_set_maxdbs(ctx.mdb_env, 1);
 	mdb_env_set_mapsize(ctx.mdb_env, 1ULL << 33);
-	char mdb_path[128];
-	snprintf(mdb_path, sizeof(mdb_path), ".");
-	if (mdb_env_open(ctx.mdb_env, mdb_path, 0, 0666)) {
+	if (mdb_env_open(ctx.mdb_env, meta_dir, 0, 0666)) {
 		log_fatal("fs_server_init() mdb_env_open(%s) failed: %s",
-			  mdb_path, strerror(errno));
+			  meta_dir, strerror(errno));
 	}
 	MDB_txn *txn;
 	if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
