@@ -725,19 +725,6 @@ finchfs_fstat(int fd, struct stat *st)
 }
 
 int
-finchfs_readdir(const char *path, void *buf,
-		void (*filler)(void *, const char *, const struct stat *))
-{
-	int ret;
-	char *p;
-	log_debug("finchfs_readdir() called path=%s", path);
-	p = canonical_path(path);
-	ret = fs_rpc_readdir(p, buf, filler);
-	free(p);
-	return (ret);
-}
-
-int
 finchfs_rename(const char *oldpath, const char *newpath)
 {
 	int ret;
@@ -785,20 +772,6 @@ finchfs_link(const char *oldpath, const char *newpath)
 	free(oldp);
 	free(newp);
 	return (0);
-}
-
-int
-finchfs_find(const char *path, const char *query,
-	     struct finchfs_find_param *param, void *buf,
-	     void (*filler)(void *, const char *))
-{
-	int ret;
-	char *p;
-	log_debug("finchfs_find() called path=%s query=%s", path, query);
-	p = canonical_path(path);
-	ret = fs_rpc_find(p, query, param, buf, filler);
-	free(p);
-	return (ret);
 }
 
 int

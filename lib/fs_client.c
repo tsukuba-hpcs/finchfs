@@ -255,38 +255,6 @@ fs_rpc_readdir_reply(void *arg, const void *header, size_t header_length,
 
 typedef struct {
 	int ret;
-	size_t total_nentries;
-	size_t match_nentries;
-	void *arg;
-	void (*filler)(void *, const char *);
-	find_header_t header;
-} find_handle_t;
-
-ucs_status_t
-fs_rpc_find_reply(void *arg, const void *header, size_t header_length,
-		  void *data, size_t length, const ucp_am_recv_param_t *param)
-{
-	find_header_t *hdr = (find_header_t *)header;
-	find_handle_t *handle = hdr->handle;
-	log_debug(
-	    "fs_rpc_find_reply: total_nentries=%zu match_nentries=%zu ret=%d",
-	    hdr->total_nentries, hdr->match_nentries, hdr->ret);
-	char *p = (char *)data;
-	if (hdr->ret == FINCH_OK || hdr->ret == FINCH_INPROGRESS) {
-		for (int i = 0; i < hdr->entry_count; i++) {
-			find_entry_t *ent = (find_entry_t *)p;
-			p += sizeof(find_entry_t) + ent->path_len;
-			handle->filler(handle->arg, ent->path);
-		}
-		handle->total_nentries += hdr->total_nentries;
-		handle->match_nentries += hdr->match_nentries;
-	}
-	handle->ret = hdr->ret;
-	return (UCS_OK);
-}
-
-typedef struct {
-	int ret;
 	void *buf;
 	getdents_header_t header;
 	uint64_t pos;
@@ -484,20 +452,6 @@ fs_client_init(char *addrfile, int *nvprocs)
 	if ((status = ucp_worker_set_am_recv_handler(
 		 env.ucp_worker, &readdir_reply_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(readdir) failed: %s",
-			  ucs_status_string(status));
-		return (-1);
-	}
-	ucp_am_handler_param_t find_reply_param = {
-	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
-			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
-			  UCP_AM_HANDLER_PARAM_FIELD_CB,
-	    .id = RPC_FIND_REP,
-	    .cb = fs_rpc_find_reply,
-	    .arg = NULL,
-	};
-	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &find_reply_param)) != UCS_OK) {
-		log_error("ucp_worker_set_am_recv_handler(find) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}
@@ -1340,93 +1294,6 @@ fs_rpc_inode_open_dir(uint64_t base_ino, const char *path, fs_stat_t *st,
 }
 
 int
-fs_rpc_readdir(const char *path, void *arg,
-	       void (*filler)(void *, const char *, const struct stat *))
-{
-	ucp_dt_iov_t iov[1];
-	iov[0].buffer = (void *)path;
-	iov[0].length = strlen(path) + 1;
-
-	readdir_handle_t *handles =
-	    malloc(sizeof(readdir_handle_t) * env.nvprocs);
-	for (int i = 0; i < env.nvprocs; i++) {
-		handles[i].ret = FINCH_INPROGRESS;
-		handles[i].arg = arg;
-		handles[i].filler = filler;
-		handles[i].header.handle = &handles[i];
-		handles[i].header.entry_count = 1024;
-		handles[i].header.fileonly = (int)(i > 0);
-	}
-
-	ucp_request_param_t rparam = {
-	    .op_attr_mask =
-		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
-	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
-	    .datatype = UCP_DATATYPE_IOV,
-	};
-
-	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
-
-	for (int i = 0; i < env.nvprocs; i++) {
-		reqs[i] = ucp_am_send_nbx(
-		    env.ucp_eps[i], RPC_READDIR_REQ, &handles[i].header,
-		    sizeof(handles[i].header), iov, 1, &rparam);
-	}
-	while (!all_req_finish(reqs, env.nvprocs)) {
-		ucp_worker_progress(env.ucp_worker);
-	}
-	int nokreq = 0;
-	int *okidx = malloc(sizeof(int) * env.nvprocs);
-	for (int i = 0; i < env.nvprocs; i++) {
-		if (reqs[i] == NULL) {
-			okidx[nokreq++] = i;
-			continue;
-		}
-		ucs_status_t status = ucp_request_check_status(reqs[i]);
-		if (status != UCS_OK) {
-			log_error("fs_rpc_readdir: ucp_am_send_nbx() failed "
-				  "at %d: %s",
-				  i, ucs_status_string(status));
-		} else {
-			okidx[nokreq++] = i;
-		}
-		ucp_request_free(reqs[i]);
-	}
-	if (nokreq < env.nvprocs) {
-		log_error("fs_rpc_readdir: ucp_am_send_nbx() failed");
-	} else {
-		log_debug("fs_rpc_readdir: ucp_am_send_nbx() succeeded");
-	}
-	free(reqs);
-	int **rets = malloc(sizeof(int *) * nokreq);
-	for (int i = 0; i < nokreq; i++) {
-		rets[i] = &handles[okidx[i]].ret;
-	}
-	while (!all_ret_finish(rets, nokreq)) {
-		ucp_worker_progress(env.ucp_worker);
-	}
-	free(okidx);
-	free(rets);
-	if (nokreq < env.nvprocs) {
-		free(handles);
-		log_error("fs_rpc_readdir_wait failed nokreq=%d nreqs=%d",
-			  nokreq, env.nvprocs);
-		return (-1);
-	}
-	int r = 0;
-	for (int i = 0; i < env.nvprocs; i++) {
-		if (handles[i].ret != FINCH_OK) {
-			log_error("fs_rpc_readdir: readdir() failed at %d: %s",
-				  i, strerror(-handles[i].ret));
-			errno = -handles[i].ret;
-			r = -1;
-		}
-	}
-	free(handles);
-	return (r);
-}
-
-int
 fs_rpc_dir_rename(uint64_t old_base, const char *oldpath, uint64_t new_base,
 		  const char *newpath)
 {
@@ -1664,107 +1531,6 @@ fs_rpc_dir_link(uint64_t old_base, const char *oldpath, uint64_t new_base,
 	}
 	log_debug("fs_rpc_dir_link: succeeded");
 	return (0);
-}
-
-int
-fs_rpc_find(const char *path, const char *query,
-	    struct finchfs_find_param *param, void *arg,
-	    void (*filler)(void *, const char *))
-{
-	ucp_dt_iov_t iov[3];
-	iov[0].buffer = (void *)path;
-	iov[0].length = strlen(path) + 1;
-	iov[1].buffer = (void *)query;
-	iov[1].length = strlen(query) + 1;
-	iov[2].buffer = &param->flag;
-	iov[2].length = sizeof(param->flag);
-
-	find_handle_t *handles = malloc(sizeof(find_handle_t) * env.nvprocs);
-	for (int i = 0; i < env.nvprocs; i++) {
-		handles[i].ret = FINCH_INPROGRESS;
-		handles[i].arg = arg;
-		handles[i].filler = filler;
-		handles[i].header.handle = &handles[i];
-		handles[i].header.entry_count =
-		    (param->flag & FINCHFS_FIND_FLAG_RETURN_PATH) ? 1024 : 1;
-		handles[i].total_nentries = 0;
-		handles[i].match_nentries = 0;
-	}
-
-	ucp_request_param_t rparam = {
-	    .op_attr_mask =
-		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
-	    .flags = UCP_AM_SEND_FLAG_EAGER | UCP_AM_SEND_FLAG_REPLY,
-	    .datatype = UCP_DATATYPE_IOV,
-	};
-
-	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
-
-	for (int i = 0; i < env.nvprocs; i++) {
-		reqs[i] = ucp_am_send_nbx(
-		    env.ucp_eps[i], RPC_FIND_REQ, &handles[i].header,
-		    sizeof(handles[i].header), iov, 3, &rparam);
-	}
-	while (!all_req_finish(reqs, env.nvprocs)) {
-		ucp_worker_progress(env.ucp_worker);
-	}
-	int nokreq = 0;
-	int *okidx = malloc(sizeof(int) * env.nvprocs);
-	for (int i = 0; i < env.nvprocs; i++) {
-		if (reqs[i] == NULL) {
-			okidx[nokreq++] = i;
-			continue;
-		}
-		ucs_status_t status = ucp_request_check_status(reqs[i]);
-		if (status != UCS_OK) {
-			log_error("fs_rpc_find: ucp_am_send_nbx() failed "
-				  "at %d: %s",
-				  i, ucs_status_string(status));
-		} else {
-			okidx[nokreq++] = i;
-		}
-		ucp_request_free(reqs[i]);
-	}
-	if (nokreq < env.nvprocs) {
-		log_error("fs_rpc_find: ucp_am_send_nbx() failed");
-	} else {
-		log_debug("fs_rpc_find: ucp_am_send_nbx() succeeded");
-	}
-	free(reqs);
-	int **rets = malloc(sizeof(int *) * nokreq);
-	for (int i = 0; i < nokreq; i++) {
-		rets[i] = &handles[okidx[i]].ret;
-	}
-	while (!all_ret_finish(rets, nokreq)) {
-		ucp_worker_progress(env.ucp_worker);
-	}
-	free(okidx);
-	free(rets);
-	if (nokreq < env.nvprocs) {
-		free(handles);
-		log_error("fs_rpc_find_wait failed nokreq=%d nreqs=%d", nokreq,
-			  env.nvprocs);
-		return (-1);
-	}
-	int r = 0;
-	for (int i = 0; i < env.nvprocs; i++) {
-		if (handles[i].ret != FINCH_OK) {
-			log_error("fs_rpc_find: find() failed at %d: %s", i,
-				  strerror(-handles[i].ret));
-			errno = -handles[i].ret;
-			r = -1;
-		}
-	}
-	if (r == 0) {
-		param->total_nentries = 0;
-		param->match_nentries = 0;
-		for (int i = 0; i < env.nvprocs; i++) {
-			param->total_nentries += handles[i].total_nentries;
-			param->match_nentries += handles[i].match_nentries;
-		}
-	}
-	free(handles);
-	return (r);
 }
 
 int

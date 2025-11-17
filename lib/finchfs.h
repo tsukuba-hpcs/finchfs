@@ -18,22 +18,8 @@ int finchfs_mkdir(const char *path, mode_t mode);
 int finchfs_rmdir(const char *path);
 int finchfs_stat(const char *path, struct stat *st);
 int finchfs_fstat(int fd, struct stat *st);
-int finchfs_readdir(const char *path, void *buf,
-		    void (*filler)(void *, const char *, const struct stat *));
 int finchfs_rename(const char *oldpath, const char *newpath);
 int finchfs_link(const char *oldpath, const char *newpath);
-typedef enum {
-	FINCHFS_FIND_FLAG_RECURSIVE = (1 << 0),
-	FINCHFS_FIND_FLAG_RETURN_PATH = (1 << 1),
-} finchfs_find_flag_t;
-struct finchfs_find_param {
-	char flag;
-	size_t total_nentries;
-	size_t match_nentries;
-};
-int finchfs_find(const char *path, const char *query,
-		 struct finchfs_find_param *param, void *buf,
-		 void (*filler)(void *, const char *));
 int finchfs_createat(int dirfd, const char *pathname, int flags, mode_t mode);
 int finchfs_createat_chunk_size(int dirfd, const char *pathname, int flags,
 				mode_t mode, size_t chunk_size);

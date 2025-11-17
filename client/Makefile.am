@@ -1,4 +1,4 @@
-bin_PROGRAMS = finchfind finchmkdir
+bin_PROGRAMS = finchmkdir
 
 AM_CPPFLAGS = -g -Wall -pthread -I$(top_srcdir)/include @UCX_CFLAGS@
 AM_LDFLAGS = -pthread

@@ -40,8 +40,6 @@ void *fs_async_rpc_inode_read(uint64_t i_ino, uint64_t index, off_t offset,
 ssize_t fs_async_rpc_inode_read_wait(void **hdles, int nreqs, size_t size);
 int fs_rpc_inode_open_dir(uint64_t base_ino, const char *path, fs_stat_t *st,
 			  uint8_t open);
-int fs_rpc_readdir(const char *path, void *arg,
-		   void (*filler)(void *, const char *, const struct stat *));
 int fs_rpc_file_unlink(uint64_t base_ino, const char *path);
 int fs_rpc_dir_unlink(uint64_t base_ino, const char *path);
 int fs_rpc_dir_rename(uint64_t old_base, const char *oldpath, uint64_t new_base,
@@ -52,9 +50,6 @@ int fs_rpc_dir_link(uint64_t old_base, const char *oldpath, uint64_t new_base,
 		    const char *newpath);
 int fs_rpc_file_link(uint64_t old_base, const char *oldpath, uint64_t new_base,
 		     const char *newpath);
-int fs_rpc_find(const char *path, const char *query,
-		struct finchfs_find_param *param, void *arg,
-		void (*filler)(void *, const char *));
 int fs_rpc_getdents(int target, uint64_t i_ino, uint64_t *pos, void *buf,
 		    size_t *count);
 
