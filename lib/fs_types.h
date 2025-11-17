@@ -1,7 +1,6 @@
 typedef struct {
 	size_t chunk_size;
 	uint64_t i_ino;
-	uint64_t eid;
 	mode_t mode;
 	struct timespec mtime, ctime;
 	size_t size;
@@ -60,6 +59,14 @@ typedef struct {
 	size_t count;
 	int ret;
 } getdents_header_t;
+
+typedef struct {
+	int *ret_addr;
+	uint16_t ring;
+	int relay_ret;
+	uint64_t relay_ino;
+	void *reply_ep;
+} ring_header_t;
 
 /* Number of 512B blocks */
 #define NUM_BLOCKS(size) ((size + 511) / 512)

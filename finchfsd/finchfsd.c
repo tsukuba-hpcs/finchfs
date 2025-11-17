@@ -37,7 +37,7 @@ handle_sig(void *arg)
 }
 
 int
-dump_addrfile(finchfsd_ctx_t *ctx)
+preprocess(finchfsd_ctx_t *ctx)
 {
 	void *addr;
 	size_t addr_len;
@@ -78,6 +78,7 @@ dump_addrfile(finchfsd_ctx_t *ctx)
 		return (-1);
 	}
 	close(fd);
+	fs_server_set_addresses(addr_allprocs, addr_len, ctx->nprocs);
 	free(addr_allprocs);
 	return (0);
 }
@@ -124,7 +125,7 @@ main(int argc, char **argv)
 		return (-1);
 	}
 
-	if (dump_addrfile(&ctx)) {
+	if (preprocess(&ctx)) {
 		log_fatal("dump_addrfile() failed");
 		return (-1);
 	}

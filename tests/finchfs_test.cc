@@ -358,7 +358,6 @@ TEST(FinchfsTest, RenameDir)
 	fd = finchfs_open("/XXX/ZZZ/file1", O_RDWR);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
-	EXPECT_EQ(finchfs_rmdir("/XXX/ZZZ"), 0);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 

@@ -24,6 +24,8 @@ fs_inode_init(char *db_dir)
 	ret = chdir(db_dir);
 	if (ret == -1 && errno == ENOENT) {
 		ret = mkdir(db_dir, 0755);
+		if (ret == -1 && errno == EEXIST)
+			ret = 0; /* Another process created it */
 		if (ret == 0)
 			ret = chdir(db_dir);
 	}

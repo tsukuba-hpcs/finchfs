@@ -43,6 +43,7 @@ struct worker_ctx {
 	uint64_t *i_ino;
 	ucp_context_h ucp_context;
 	ucp_worker_h ucp_worker;
+	ucp_ep_h ucp_next_ep;
 	int *shutdown;
 	struct fs_ctx *fs;
 	struct inode *inodes;
@@ -81,7 +82,7 @@ static inline inode_t *
 get_parent_and_filename(uint64_t base, char *filename, const char *path,
 			struct worker_ctx *ctx)
 {
-	inode_t *e = (base == 0) ? &ctx->inodes[0] : (inode_t *)base;
+	inode_t *e = (base == 0) ? &ctx->inodes[0] : &ctx->inodes[base];
 	MDB_txn *txn;
 	MDB_val key, data;
 	char *prev = (char *)path;
@@ -114,7 +115,7 @@ get_parent_and_filename(uint64_t base, char *filename, const char *path,
 			e = NULL;
 			goto out;
 		}
-		e = &ctx->inodes[dkey.i_ino / ctx->nprocs];
+		e = &ctx->inodes[dkey.i_ino];
 		if (!S_ISDIR(e->mode)) {
 			log_error("get_parent_and_filename() path=%s is not a "
 				  "directory",
@@ -134,7 +135,7 @@ out:
 static inline inode_t *
 get_dir_entry(uint64_t base, const char *path, struct worker_ctx *ctx)
 {
-	inode_t *e = (base == 0) ? &ctx->inodes[0] : (inode_t *)base;
+	inode_t *e = (base == 0) ? &ctx->inodes[0] : &ctx->inodes[base];
 	MDB_txn *txn;
 	MDB_val key, data;
 	dentry_key_t dkey;
@@ -167,7 +168,7 @@ get_dir_entry(uint64_t base, const char *path, struct worker_ctx *ctx)
 			e = NULL;
 			goto out;
 		}
-		e = &ctx->inodes[dkey.i_ino / ctx->nprocs];
+		e = &ctx->inodes[dkey.i_ino];
 		if (!S_ISDIR(e->mode)) {
 			log_error("get_dir() path=%s is not a directory", path);
 			errno = ENOTDIR;
@@ -187,7 +188,7 @@ get_dir_entry(uint64_t base, const char *path, struct worker_ctx *ctx)
 		e = NULL;
 		goto out;
 	}
-	e = &ctx->inodes[dkey.i_ino / ctx->nprocs];
+	e = &ctx->inodes[dkey.i_ino];
 	if (!S_ISDIR(e->mode)) {
 		log_error("get_dir() path=%s is not a directory", path);
 		errno = ENOTDIR;
@@ -272,6 +273,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	uint64_t base;
 	mode_t mode;
 	char *path;
+	ring_header_t *h = (ring_header_t *)header;
 	char *p = (char *)data;
 	base = *(uint64_t *)p;
 	p += sizeof(base);
@@ -279,14 +281,45 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	p += sizeof(mode);
 	path = (char *)p;
 
-	log_debug("fs_rpc_mkdir_recv() called path=%s", path);
+	log_debug("fs_rpc_mkdir_recv() called path=%s ring=%u dino=%zu", path,
+		  h->ring, h->relay_ino);
 
-	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+	if (h->ring == ctx.nprocs) {
+		iov_req_t *user_data =
+		    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+		user_data->header = malloc(header_length);
+		memcpy(user_data->header, header, header_length);
+		user_data->n = 1;
+		user_data->iov[0].buffer = malloc(sizeof(int));
+		user_data->iov[0].length = sizeof(int);
+		ring_header_t *rh = (ring_header_t *)user_data->header;
+		log_debug("fs_rpc_mkdir_recv() finishing ring=%u relay_ret=%d",
+			  h->ring, rh->relay_ret);
+		*(int *)(user_data->iov[0].buffer) = rh->relay_ret;
+		ucs_status_t status;
+		status = post_iov_req(rh->reply_ep, RPC_RET_REP, user_data,
+				      header_length);
+		return (status);
+	}
+
+	if (h->ring == 0)
+		h->reply_ep = param->reply_ep;
+
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 3);
 	user_data->header = malloc(header_length);
 	memcpy(user_data->header, header, header_length);
-	user_data->n = 1;
-	user_data->iov[0].buffer = malloc(sizeof(int));
-	user_data->iov[0].length = sizeof(int);
+	user_data->n = 3;
+	user_data->iov[0].buffer = malloc(sizeof(uint64_t));
+	user_data->iov[0].length = sizeof(uint64_t);
+	memcpy(user_data->iov[0].buffer, &base, sizeof(uint64_t));
+	user_data->iov[1].buffer = malloc(sizeof(mode_t));
+	user_data->iov[1].length = sizeof(mode_t);
+	memcpy(user_data->iov[1].buffer, &mode, sizeof(mode_t));
+	user_data->iov[2].buffer = malloc(strlen(path) + 1);
+	user_data->iov[2].length = strlen(path) + 1;
+	memcpy(user_data->iov[2].buffer, path, strlen(path) + 1);
+	ring_header_t *rh = (ring_header_t *)user_data->header;
 
 	char dirname[128];
 	inode_t *parent = get_parent_and_filename(base, dirname, path, &ctx);
@@ -294,7 +327,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	if (parent == NULL) {
 		log_debug("fs_rpc_mkdir_recv() parent path=%s does not exist",
 			  path);
-		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+		rh->relay_ret = FINCH_ENOENT;
 	} else {
 		dentry_key_t dkey;
 		MDB_txn *txn;
@@ -309,16 +342,20 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 			log_error("get_parent_and_filename() mdb_txn_begin() "
 				  "failed: %s",
 				  strerror(errno));
-			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
+			h->relay_ret = rh->relay_ret = FINCH_EIO;
 			goto out;
 		}
 
 		if (!mdb_get(txn, ctx.dbi, &key, &data)) {
 			dkey.i_ino = *(uint64_t *)data.mv_data;
-			*(int *)(user_data->iov[0].buffer) = FINCH_EEXIST;
+			rh->relay_ret = FINCH_EEXIST;
+			log_debug("fs_rpc_mkdir_recv() path=%s already exists",
+				  path);
 		} else {
-			uint64_t ino = alloc_ino(&ctx);
-			inode_t *new_inode = &ctx.inodes[ino / ctx.nprocs];
+			uint64_t ino =
+			    (h->ring == 0) ? alloc_ino(&ctx) : h->relay_ino;
+			rh->relay_ino = ino;
+			inode_t *new_inode = &ctx.inodes[ino];
 			data.mv_data = &ino;
 			data.mv_size = sizeof(uint64_t);
 			int rc = mdb_put(txn, ctx.dbi, &key, &data, 0);
@@ -333,13 +370,38 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 			new_inode->i_nlink = 1;
 			timespec_get(&new_inode->mtime, TIME_UTC);
 			timespec_get(&new_inode->ctime, TIME_UTC);
-			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
+			rh->relay_ret = FINCH_OK;
 		}
 		mdb_txn_commit(txn);
 	}
 out:
+	rh->ring++;
+	if (ctx.nprocs == 1) {
+		iov_req_t *old = user_data;
+		user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+		user_data->header = malloc(header_length);
+		memcpy(user_data->header, header, header_length);
+		user_data->n = 1;
+		user_data->iov[0].buffer = malloc(sizeof(int));
+		user_data->iov[0].length = sizeof(int);
+		*(int *)(user_data->iov[0].buffer) = rh->relay_ret;
+		ucs_status_t status;
+		status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+				      header_length);
+		free(old->header);
+		for (int i = 0; i < old->n; i++) {
+			free(old->iov[i].buffer);
+		}
+		free(old);
+		return (status);
+	}
+	if (h->ring > 0 && rh->relay_ret != h->relay_ret) {
+		log_fatal("fs_rpc_mkdir_recv() inconsistent relay_ret ring=%u "
+			  "relay_ret=%d header_relay_ret=%d",
+			  h->ring, rh->relay_ret, h->relay_ret);
+	}
 	ucs_status_t status;
-	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+	status = post_iov_req(ctx.ucp_next_ep, RPC_MKDIR_REQ, user_data,
 			      header_length);
 	return (status);
 }
@@ -406,16 +468,14 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		}
 
 		if (!mdb_get(txn, ctx.dbi, &key, &data)) {
-			// Entry already exists
 			uint64_t ino = *(uint64_t *)data.mv_data;
-			inode_t *inode = &ctx.inodes[ino / ctx.nprocs];
+			inode_t *inode = &ctx.inodes[ino];
 			inode->i_count++;
 			*(uint64_t *)(user_data->iov[1].buffer) = inode->i_ino;
 			*(void **)(user_data->iov[2].buffer) = inode;
 		} else {
-			// Create new entry
 			uint64_t ino = alloc_ino(&ctx);
-			inode_t *new_inode = &ctx.inodes[ino / ctx.nprocs];
+			inode_t *new_inode = &ctx.inodes[ino];
 			data.mv_data = &ino;
 			data.mv_size = sizeof(uint64_t);
 			mdb_put(txn, ctx.dbi, &key, &data, 0);
@@ -445,9 +505,9 @@ out:
 }
 
 ucs_status_t
-fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
-			 void *data, size_t length,
-			 const ucp_am_recv_param_t *param)
+fs_rpc_file_unlink_recv(void *arg, const void *header, size_t header_length,
+			void *data, size_t length,
+			const ucp_am_recv_param_t *param)
 {
 	uint64_t base;
 	char *path;
@@ -455,8 +515,7 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 	base = *(uint64_t *)p;
 	p += sizeof(base);
 	path = (char *)p;
-
-	log_debug("fs_rpc_inode_unlink_recv() called path=%s", path);
+	log_debug("fs_rpc_file_unlink_recv() called path=%s", path);
 
 	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
 	user_data->header = malloc(header_length);
@@ -493,7 +552,7 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 
 		if (!mdb_get(txn, ctx.dbi, &key, &data)) {
 			uint64_t ino = *(uint64_t *)data.mv_data;
-			inode_t *inode = &ctx.inodes[ino / ctx.nprocs];
+			inode_t *inode = &ctx.inodes[ino];
 			inode->i_nlink--;
 			mdb_del(txn, ctx.dbi, &key, NULL);
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
@@ -508,6 +567,129 @@ fs_rpc_inode_unlink_recv(void *arg, const void *header, size_t header_length,
 out:
 	ucs_status_t status;
 	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+			      header_length);
+	return (status);
+}
+
+ucs_status_t
+fs_rpc_dir_unlink_recv(void *arg, const void *header, size_t header_length,
+		       void *data, size_t length,
+		       const ucp_am_recv_param_t *param)
+{
+	uint64_t base;
+	char *path;
+	ring_header_t *h = (ring_header_t *)header;
+	char *p = (char *)data;
+	base = *(uint64_t *)p;
+	p += sizeof(base);
+	path = (char *)p;
+
+	log_debug("fs_rpc_inode_unlink_recv() called path=%s ring=%d", path,
+		  h->ring);
+
+	if (h->ring == ctx.nprocs) {
+		iov_req_t *user_data =
+		    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+		user_data->header = malloc(header_length);
+		memcpy(user_data->header, header, header_length);
+		user_data->n = 1;
+		user_data->iov[0].buffer = malloc(sizeof(int));
+		user_data->iov[0].length = sizeof(int);
+		ring_header_t *rh = (ring_header_t *)user_data->header;
+		*(int *)(user_data->iov[0].buffer) = rh->relay_ret;
+		ucs_status_t status;
+		log_debug("fs_rpc_dir_unlink_recv() finished ring=%d "
+			  "relay_ret=%d",
+			  h->ring, rh->relay_ret);
+		status = post_iov_req(rh->reply_ep, RPC_RET_REP, user_data,
+				      header_length);
+		return (status);
+	}
+
+	if (h->ring == 0)
+		h->reply_ep = param->reply_ep;
+
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	user_data->n = 2;
+	user_data->iov[0].buffer = malloc(sizeof(uint64_t));
+	user_data->iov[0].length = sizeof(uint64_t);
+	memcpy(user_data->iov[0].buffer, &base, sizeof(uint64_t));
+	user_data->iov[1].buffer = malloc(strlen(path) + 1);
+	user_data->iov[1].length = strlen(path) + 1;
+	memcpy(user_data->iov[1].buffer, path, strlen(path) + 1);
+	ring_header_t *rh = (ring_header_t *)user_data->header;
+
+	char filename[128];
+	inode_t *parent = get_parent_and_filename(base, filename, path, &ctx);
+
+	if (parent == NULL) {
+		log_debug(
+		    "fs_rpc_inode_unlink_recv() parent path=%s does not exist",
+		    path);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else {
+		dentry_key_t dkey;
+		MDB_txn *txn;
+		MDB_val key, data;
+		dkey.i_ino = parent->i_ino;
+		key.mv_data = &dkey;
+		key.mv_size = sizeof(dentry_key_t);
+		memcpy(dkey.name, filename, strlen(filename) + 1);
+		for (int i = strlen(filename) + 1; i < sizeof(dkey.name); i++)
+			dkey.name[i] = '\0';
+		if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
+			log_error("fs_rpc_inode_unlink_recv() mdb_txn_begin() "
+				  "failed: %s",
+				  strerror(errno));
+			rh->relay_ret = FINCH_EIO;
+			goto out;
+		}
+
+		if (!mdb_get(txn, ctx.dbi, &key, &data)) {
+			uint64_t ino = *(uint64_t *)data.mv_data;
+			inode_t *inode = &ctx.inodes[ino];
+			inode->i_nlink--;
+			mdb_del(txn, ctx.dbi, &key, NULL);
+			rh->relay_ret = FINCH_OK;
+		} else {
+			log_debug(
+			    "fs_rpc_inode_unlink_recv() path=%s does not exist",
+			    path);
+			rh->relay_ret = FINCH_ENOENT;
+		}
+		mdb_txn_commit(txn);
+	}
+out:
+	rh->ring++;
+	if (ctx.nprocs == 1) {
+		iov_req_t *old = user_data;
+		user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+		user_data->header = malloc(header_length);
+		memcpy(user_data->header, header, header_length);
+		user_data->n = 1;
+		user_data->iov[0].buffer = malloc(sizeof(int));
+		user_data->iov[0].length = sizeof(int);
+		*(int *)(user_data->iov[0].buffer) = rh->relay_ret;
+		ucs_status_t status;
+		status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+				      header_length);
+		free(old->header);
+		for (int i = 0; i < old->n; i++) {
+			free(old->iov[i].buffer);
+		}
+		free(old);
+		return (status);
+	}
+	if (h->ring > 0 && rh->relay_ret != h->relay_ret) {
+		log_fatal("fs_rpc_inode_unlink_recv() inconsistent relay_ret "
+			  "ring=%u relay_ret=%d header_relay_ret=%d",
+			  h->ring, rh->relay_ret, h->relay_ret);
+	}
+	ucs_status_t status;
+	status = post_iov_req(ctx.ucp_next_ep, RPC_DIR_UNLINK_REQ, user_data,
 			      header_length);
 	return (status);
 }
@@ -559,7 +741,6 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 		st->ctime = inode->ctime;
 		st->size = inode->size;
 		st->nlink = inode->i_nlink;
-		memcpy(&st->eid, &inode, sizeof(inode));
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 		if (open & 1) {
 			inode->i_count++;
@@ -584,7 +765,7 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 
 		if (!mdb_get(txn, ctx.dbi, &key, &data)) {
 			uint64_t ino = *(uint64_t *)data.mv_data;
-			inode_t *inode = &ctx.inodes[ino / ctx.nprocs];
+			inode_t *inode = &ctx.inodes[ino];
 
 			st->chunk_size = inode->chunk_size;
 			st->i_ino = inode->i_ino;
@@ -593,7 +774,6 @@ fs_rpc_inode_stat_recv(void *arg, const void *header, size_t header_length,
 			st->ctime = inode->ctime;
 			st->size = inode->size;
 			st->nlink = inode->i_nlink;
-			memcpy(&st->eid, &inode, sizeof(inode));
 			*(int *)(user_data->iov[0].buffer) = FINCH_OK;
 			if (open & 1) {
 				inode->i_count++;
@@ -618,29 +798,31 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 			      size_t header_length, void *data, size_t length,
 			      const ucp_am_recv_param_t *param)
 {
-	inode_t *eid;
+	uint64_t i_ino;
 	size_t ssize;
+	inode_t *inode;
 	char *p = (char *)data;
-	eid = *(inode_t **)p;
-	p += sizeof(eid);
+	i_ino = *(uint64_t *)p;
+	p += sizeof(i_ino);
 	ssize = *(size_t *)p;
+	inode = &ctx.inodes[i_ino];
 
-	log_debug("fs_rpc_inode_stat_update_recv() called eid=%p size=%zu", eid,
-		  ssize >> 3);
+	log_debug("fs_rpc_inode_stat_update_recv() called i_ino=%zu size=%zu",
+		  i_ino, ssize >> 3);
 
 	if (ssize & 1) {
 		// Close operation: decrement reference count
-		eid->i_count--;
-		if (eid->size < (ssize >> 3)) {
-			eid->size = ssize >> 3;
+		inode->i_count--;
+		if (inode->size < (ssize >> 3)) {
+			inode->size = ssize >> 3;
 		}
-		timespec_get(&eid->mtime, TIME_UTC);
+		timespec_get(&inode->mtime, TIME_UTC);
 	} else {
 		// Fsync operation: update size and return current size
-		if (eid->size < (ssize >> 3)) {
-			eid->size = ssize >> 3;
+		if (inode->size < (ssize >> 3)) {
+			inode->size = ssize >> 3;
 		}
-		timespec_get(&eid->mtime, TIME_UTC);
+		timespec_get(&inode->mtime, TIME_UTC);
 
 		iov_req_t *user_data =
 		    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
@@ -653,7 +835,7 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 		user_data->iov[1].length = sizeof(size_t);
 
 		*(int *)(user_data->iov[0].buffer) = FINCH_OK;
-		*(size_t *)(user_data->iov[1].buffer) = eid->size;
+		*(size_t *)(user_data->iov[1].buffer) = inode->size;
 
 		ucs_status_t status;
 		status = post_iov_req(param->reply_ep, RPC_INODE_FSYNC_REP,
@@ -898,8 +1080,7 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 		dentry_key_t *dk = (dentry_key_t *)k.mv_data;
 		if (dk->i_ino != dir->i_ino)
 			break;
-		inode_t *child =
-		    &ctx.inodes[(*(uint64_t *)v.mv_data) / ctx.nprocs];
+		inode_t *child = &ctx.inodes[(*(uint64_t *)v.mv_data)];
 
 		if (rhdr->fileonly && S_ISDIR(child->mode)) {
 			rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
@@ -955,14 +1136,15 @@ fs_rpc_readdir_recv(void *arg, const void *header, size_t header_length,
 }
 
 ucs_status_t
-fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
-		   void *data, size_t length, const ucp_am_recv_param_t *param)
+fs_rpc_dir_rename_recv(void *arg, const void *header, size_t header_length,
+		       void *data, size_t length,
+		       const ucp_am_recv_param_t *param)
 {
 	uint64_t oldbase;
 	char *opath;
 	uint64_t newbase;
 	char *npath;
-	uint8_t isdir;
+	ring_header_t *h = (ring_header_t *)header;
 	char *p = (char *)data;
 	oldbase = *(uint64_t *)p;
 	p += sizeof(uint64_t);
@@ -971,10 +1153,179 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 	newbase = *(uint64_t *)p;
 	p += sizeof(uint64_t);
 	npath = (char *)p;
-	p += strlen(npath) + 1;
-	isdir = *(uint8_t *)p;
 
-	log_debug("fs_rpc_rename_recv() called opath=%s npath=%s", opath,
+	log_debug("fs_rpc_dir_rename_recv() called opath=%s npath=%s ring=%d ",
+		  opath, npath, h->ring);
+
+	if (h->ring == ctx.nprocs) {
+		iov_req_t *user_data =
+		    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+		user_data->header = malloc(header_length);
+		memcpy(user_data->header, header, header_length);
+		user_data->n = 1;
+		user_data->iov[0].buffer = malloc(sizeof(int));
+		user_data->iov[0].length = sizeof(int);
+		ring_header_t *rh = (ring_header_t *)user_data->header;
+		*(int *)(user_data->iov[0].buffer) = rh->relay_ret;
+		ucs_status_t status;
+		log_debug("fs_rpc_dir_rename_recv() finished ring=%d "
+			  "relay_ret=%d",
+			  h->ring, rh->relay_ret);
+		status = post_iov_req(rh->reply_ep, RPC_RET_REP, user_data,
+				      header_length);
+		return (status);
+	}
+
+	if (h->ring == 0)
+		h->reply_ep = param->reply_ep;
+
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 4);
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	user_data->n = 4;
+	user_data->iov[0].buffer = malloc(sizeof(uint64_t));
+	user_data->iov[0].length = sizeof(uint64_t);
+	memcpy(user_data->iov[0].buffer, &oldbase, sizeof(uint64_t));
+	user_data->iov[1].buffer = malloc(strlen(opath) + 1);
+	user_data->iov[1].length = strlen(opath) + 1;
+	memcpy(user_data->iov[1].buffer, opath, strlen(opath) + 1);
+	user_data->iov[2].buffer = malloc(sizeof(uint64_t));
+	user_data->iov[2].length = sizeof(uint64_t);
+	memcpy(user_data->iov[2].buffer, &newbase, sizeof(uint64_t));
+	user_data->iov[3].buffer = malloc(strlen(npath) + 1);
+	user_data->iov[3].length = strlen(npath) + 1;
+	memcpy(user_data->iov[3].buffer, npath, strlen(npath) + 1);
+	ring_header_t *rh = (ring_header_t *)user_data->header;
+
+	char oname[128];
+	char nname[128];
+	inode_t *oparent = get_parent_and_filename(oldbase, oname, opath, &ctx);
+	inode_t *nparent = get_parent_and_filename(newbase, nname, npath, &ctx);
+
+	if (oparent == NULL) {
+		log_debug(
+		    "fs_rpc_rename_recv() old parent path=%s does not exist",
+		    opath);
+		rh->relay_ret = FINCH_ENOENT;
+	} else if (nparent == NULL) {
+		log_debug(
+		    "fs_rpc_rename_recv() new parent path=%s does not exist",
+		    npath);
+		rh->relay_ret = FINCH_ENOENT;
+	} else {
+		dentry_key_t old_dkey, new_dkey;
+		MDB_txn *txn;
+		MDB_val old_key, new_key, val;
+
+		old_dkey.i_ino = oparent->i_ino;
+		memcpy(old_dkey.name, oname, strlen(oname) + 1);
+		for (int i = strlen(oname) + 1; i < sizeof(old_dkey.name); i++)
+			old_dkey.name[i] = '\0';
+		old_key.mv_data = &old_dkey;
+		old_key.mv_size = sizeof(dentry_key_t);
+
+		new_dkey.i_ino = nparent->i_ino;
+		memcpy(new_dkey.name, nname, strlen(nname) + 1);
+		for (int i = strlen(nname) + 1; i < sizeof(new_dkey.name); i++)
+			new_dkey.name[i] = '\0';
+		new_key.mv_data = &new_dkey;
+		new_key.mv_size = sizeof(dentry_key_t);
+
+		if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
+			log_error("fs_rpc_rename_recv() mdb_txn_begin() "
+				  "failed: %s",
+				  strerror(errno));
+			rh->relay_ret = FINCH_EIO;
+			goto out;
+		}
+
+		if (mdb_get(txn, ctx.dbi, &old_key, &val)) {
+			log_debug(
+			    "fs_rpc_rename_recv() opath=%s does not exist",
+			    opath);
+			rh->relay_ret = FINCH_ENOENT;
+			mdb_txn_abort(txn);
+		} else {
+			uint64_t ino = *(uint64_t *)val.mv_data;
+			mode_t mode = ctx.inodes[ino].mode;
+			if (!S_ISDIR(mode)) {
+				log_debug("fs_rpc_rename_recv() target is "
+					  "not a directory");
+				rh->relay_ret = FINCH_ENOTDIR;
+				mdb_txn_abort(txn);
+				goto out;
+			}
+			MDB_val old_val;
+			if (!mdb_get(txn, ctx.dbi, &new_key, &old_val)) {
+				uint64_t old_ino = *(uint64_t *)old_val.mv_data;
+				inode_t *old_inode = &ctx.inodes[old_ino];
+				old_inode->i_nlink--;
+				mdb_del(txn, ctx.dbi, &new_key, NULL);
+			}
+
+			mdb_del(txn, ctx.dbi, &old_key, NULL);
+
+			val.mv_data = &ino;
+			val.mv_size = sizeof(uint64_t);
+			mdb_put(txn, ctx.dbi, &new_key, &val, 0);
+
+			rh->relay_ret = FINCH_OK;
+			mdb_txn_commit(txn);
+		}
+	}
+out:
+	rh->ring++;
+	if (ctx.nprocs == 1) {
+		iov_req_t *old = user_data;
+		user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+		user_data->header = malloc(header_length);
+		memcpy(user_data->header, header, header_length);
+		user_data->n = 1;
+		user_data->iov[0].buffer = malloc(sizeof(int));
+		user_data->iov[0].length = sizeof(int);
+		*(int *)(user_data->iov[0].buffer) = rh->relay_ret;
+		ucs_status_t status;
+		status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+				      header_length);
+		free(old->header);
+		for (int i = 0; i < old->n; i++) {
+			free(old->iov[i].buffer);
+		}
+		free(old);
+		return (status);
+	}
+	if (h->ring > 0 && rh->relay_ret != h->relay_ret) {
+		log_fatal("fs_rpc_mkdir_recv() inconsistent relay_ret ring=%u "
+			  "relay_ret=%d header_relay_ret=%d",
+			  h->ring, rh->relay_ret, h->relay_ret);
+	}
+	ucs_status_t status;
+	log_debug("fs_rpc_dir_rename_recv() forwarding to ring=%u", h->ring);
+	status = post_iov_req(ctx.ucp_next_ep, RPC_DIR_RENAME_REQ, user_data,
+			      header_length);
+	return (status);
+}
+
+ucs_status_t
+fs_rpc_file_rename_recv(void *arg, const void *header, size_t header_length,
+			void *data, size_t length,
+			const ucp_am_recv_param_t *param)
+{
+	uint64_t oldbase;
+	char *opath;
+	uint64_t newbase;
+	char *npath;
+	char *p = (char *)data;
+	oldbase = *(uint64_t *)p;
+	p += sizeof(uint64_t);
+	opath = (char *)p;
+	p += strlen(opath) + 1;
+	newbase = *(uint64_t *)p;
+	p += sizeof(uint64_t);
+	npath = (char *)p;
+
+	log_debug("fs_rpc_file_rename_recv() called opath=%s npath=%s", opath,
 		  npath);
 
 	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
@@ -1035,14 +1386,7 @@ fs_rpc_rename_recv(void *arg, const void *header, size_t header_length,
 		} else {
 			uint64_t ino = *(uint64_t *)val.mv_data;
 			mode_t mode = ctx.inodes[ino / ctx.nprocs].mode;
-			if (isdir && !S_ISDIR(mode)) {
-				log_debug("fs_rpc_rename_recv() target is "
-					  "not a directory");
-				*(int *)(user_data->iov[0].buffer) =
-				    FINCH_ENOTDIR;
-				mdb_txn_abort(txn);
-				goto out;
-			} else if (!isdir && S_ISDIR(mode)) {
+			if (S_ISDIR(mode)) {
 				log_debug("fs_rpc_rename_recv() target is a "
 					  "directory");
 				*(int *)(user_data->iov[0].buffer) =
@@ -1077,15 +1421,14 @@ out:
 }
 
 ucs_status_t
-fs_rpc_inode_link_recv(void *arg, const void *header, size_t header_length,
-		       void *data, size_t length,
-		       const ucp_am_recv_param_t *param)
+fs_rpc_file_link_recv(void *arg, const void *header, size_t header_length,
+		      void *data, size_t length,
+		      const ucp_am_recv_param_t *param)
 {
 	uint64_t oldbase;
 	char *opath;
 	uint64_t newbase;
 	char *npath;
-	uint8_t isdir;
 	char *p = (char *)data;
 	oldbase = *(uint64_t *)p;
 	p += sizeof(uint64_t);
@@ -1095,10 +1438,9 @@ fs_rpc_inode_link_recv(void *arg, const void *header, size_t header_length,
 	p += sizeof(uint64_t);
 	npath = (char *)p;
 	p += strlen(npath) + 1;
-	isdir = *(uint8_t *)p;
 
-	log_debug("fs_rpc_link_recv() called opath=%s npath=%s isdir=%d", opath,
-		  npath, isdir);
+	log_debug("fs_rpc_file_link_recv() called opath=%s npath=%s", opath,
+		  npath);
 
 	iov_req_t *user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
 	user_data->header = malloc(header_length);
@@ -1157,19 +1499,12 @@ fs_rpc_inode_link_recv(void *arg, const void *header, size_t header_length,
 			goto out;
 		} else {
 			uint64_t ino = *(uint64_t *)val.mv_data;
-			inode_t *inode = &ctx.inodes[ino / ctx.nprocs];
-			if (!isdir && S_ISDIR(inode->mode)) {
+			inode_t *inode = &ctx.inodes[ino];
+			if (S_ISDIR(inode->mode)) {
 				log_debug("fs_rpc_link_recv() hard link "
 					  "to directory not allowed");
 				*(int *)(user_data->iov[0].buffer) =
 				    FINCH_EISDIR;
-				mdb_txn_abort(txn);
-				goto out;
-			} else if (isdir && !S_ISDIR(inode->mode)) {
-				log_debug("fs_rpc_link_recv() link type "
-					  "mismatch");
-				*(int *)(user_data->iov[0].buffer) =
-				    FINCH_ENOTDIR;
 				mdb_txn_abort(txn);
 				goto out;
 			}
@@ -1185,6 +1520,172 @@ fs_rpc_inode_link_recv(void *arg, const void *header, size_t header_length,
 out:
 	ucs_status_t status;
 	status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+			      header_length);
+	return (status);
+}
+
+ucs_status_t
+fs_rpc_dir_link_recv(void *arg, const void *header, size_t header_length,
+		     void *data, size_t length,
+		     const ucp_am_recv_param_t *param)
+{
+	uint64_t oldbase;
+	char *opath;
+	uint64_t newbase;
+	char *npath;
+	ring_header_t *h = (ring_header_t *)header;
+	char *p = (char *)data;
+	oldbase = *(uint64_t *)p;
+	p += sizeof(uint64_t);
+	opath = (char *)p;
+	p += strlen(opath) + 1;
+	newbase = *(uint64_t *)p;
+	p += sizeof(uint64_t);
+	npath = (char *)p;
+	p += strlen(npath) + 1;
+
+	log_debug("fs_rpc_dir_link_recv() called opath=%s npath=%s", opath,
+		  npath);
+
+	if (h->ring == ctx.nprocs) {
+		iov_req_t *user_data =
+		    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+		user_data->header = malloc(header_length);
+		memcpy(user_data->header, header, header_length);
+		user_data->n = 1;
+		user_data->iov[0].buffer = malloc(sizeof(int));
+		user_data->iov[0].length = sizeof(int);
+		ring_header_t *rh = (ring_header_t *)user_data->header;
+		*(int *)(user_data->iov[0].buffer) = rh->relay_ret;
+		ucs_status_t status;
+		log_debug("fs_rpc_link_recv() finished ring=%d "
+			  "relay_ret=%d",
+			  h->ring, rh->relay_ret);
+		status = post_iov_req(rh->reply_ep, RPC_RET_REP, user_data,
+				      header_length);
+		return (status);
+	}
+
+	if (h->ring == 0)
+		h->reply_ep = param->reply_ep;
+
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 4);
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	user_data->n = 4;
+	user_data->iov[0].buffer = malloc(sizeof(uint64_t));
+	user_data->iov[0].length = sizeof(uint64_t);
+	memcpy(user_data->iov[0].buffer, &oldbase, sizeof(uint64_t));
+	user_data->iov[1].buffer = malloc(strlen(opath) + 1);
+	user_data->iov[1].length = strlen(opath) + 1;
+	memcpy(user_data->iov[1].buffer, opath, strlen(opath) + 1);
+	user_data->iov[2].buffer = malloc(sizeof(uint64_t));
+	user_data->iov[2].length = sizeof(uint64_t);
+	memcpy(user_data->iov[2].buffer, &newbase, sizeof(uint64_t));
+	user_data->iov[3].buffer = malloc(strlen(npath) + 1);
+	user_data->iov[3].length = strlen(npath) + 1;
+	memcpy(user_data->iov[3].buffer, npath, strlen(npath) + 1);
+	ring_header_t *rh = (ring_header_t *)user_data->header;
+
+	char oname[128];
+	char nname[128];
+	inode_t *oparent = get_parent_and_filename(oldbase, oname, opath, &ctx);
+	inode_t *nparent = get_parent_and_filename(newbase, nname, npath, &ctx);
+
+	if (oparent == NULL) {
+		log_debug(
+		    "fs_rpc_link_recv() old parent path=%s does not exist",
+		    opath);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else if (nparent == NULL) {
+		log_debug(
+		    "fs_rpc_link_recv() new parent path=%s does not exist",
+		    npath);
+		*(int *)(user_data->iov[0].buffer) = FINCH_ENOENT;
+	} else {
+		dentry_key_t old_dkey, new_dkey;
+		MDB_txn *txn;
+		MDB_val old_key, new_key, val;
+
+		old_dkey.i_ino = oparent->i_ino;
+		memcpy(old_dkey.name, oname, strlen(oname) + 1);
+		for (int i = strlen(oname) + 1; i < sizeof(old_dkey.name); i++)
+			old_dkey.name[i] = '\0';
+		old_key.mv_data = &old_dkey;
+		old_key.mv_size = sizeof(dentry_key_t);
+
+		new_dkey.i_ino = nparent->i_ino;
+		memcpy(new_dkey.name, nname, strlen(nname) + 1);
+		for (int i = strlen(nname) + 1; i < sizeof(new_dkey.name); i++)
+			new_dkey.name[i] = '\0';
+		new_key.mv_data = &new_dkey;
+		new_key.mv_size = sizeof(dentry_key_t);
+
+		if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
+			log_error("fs_rpc_link_recv() mdb_txn_begin() "
+				  "failed: %s",
+				  strerror(errno));
+			rh->relay_ret = FINCH_EIO;
+			goto out;
+		}
+
+		if (mdb_get(txn, ctx.dbi, &old_key, &val)) {
+			log_debug("fs_rpc_link_recv() opath=%s does not exist",
+				  opath);
+			rh->relay_ret = FINCH_ENOENT;
+			mdb_txn_abort(txn);
+			goto out;
+		} else {
+			uint64_t ino = *(uint64_t *)val.mv_data;
+			inode_t *inode = &ctx.inodes[ino];
+			if (!S_ISDIR(inode->mode)) {
+				log_debug("fs_rpc_link_recv() hard link "
+					  "to file not allowed");
+				rh->relay_ret = FINCH_EISDIR;
+				mdb_txn_abort(txn);
+				goto out;
+			}
+			log_debug("fs_rpc_link_recv() creating link to "
+				  "directory ino=%lu",
+				  ino);
+			val.mv_data = &ino;
+			val.mv_size = sizeof(uint64_t);
+			mdb_put(txn, ctx.dbi, &new_key, &val, 0);
+			inode->i_nlink++;
+			rh->relay_ret = FINCH_OK;
+			mdb_txn_commit(txn);
+			goto out;
+		}
+	}
+out:
+	rh->ring++;
+	if (ctx.nprocs == 1) {
+		iov_req_t *old = user_data;
+		user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
+		user_data->header = malloc(header_length);
+		memcpy(user_data->header, header, header_length);
+		user_data->n = 1;
+		user_data->iov[0].buffer = malloc(sizeof(int));
+		user_data->iov[0].length = sizeof(int);
+		*(int *)(user_data->iov[0].buffer) = rh->relay_ret;
+		ucs_status_t status;
+		status = post_iov_req(param->reply_ep, RPC_RET_REP, user_data,
+				      header_length);
+		free(old->header);
+		for (int i = 0; i < old->n; i++) {
+			free(old->iov[i].buffer);
+		}
+		free(old);
+		return (status);
+	}
+	if (h->ring > 0 && rh->relay_ret != h->relay_ret) {
+		log_fatal("fs_rpc_link_recv() inconsistent relay_ret ring=%u "
+			  "relay_ret=%d header_relay_ret=%d",
+			  h->ring, rh->relay_ret, h->relay_ret);
+	}
+	ucs_status_t status;
+	status = post_iov_req(ctx.ucp_next_ep, RPC_DIR_LINK_REQ, user_data,
 			      header_length);
 	return (status);
 }
@@ -1229,8 +1730,7 @@ fs_rpc_find_internal(MDB_txn *txn, iov_req_t **user_data, inode_t *dir,
 		if (dk->i_ino != dir->i_ino)
 			break;
 
-		inode_t *child =
-		    &ctx.inodes[(*(uint64_t *)v.mv_data) / ctx.nprocs];
+		inode_t *child = &ctx.inodes[(*(uint64_t *)v.mv_data)];
 
 		if (param->recursive && S_ISDIR(child->mode)) {
 			mdb_cursor_close(cur);
@@ -1251,8 +1751,7 @@ fs_rpc_find_internal(MDB_txn *txn, iov_req_t **user_data, inode_t *dir,
 			dk = (dentry_key_t *)k.mv_data;
 			if (dk->i_ino != dir->i_ino)
 				break;
-			child =
-			    &ctx.inodes[(*(uint64_t *)v.mv_data) / ctx.nprocs];
+			child = &ctx.inodes[(*(uint64_t *)v.mv_data)];
 		}
 		fs_stat_t st = {
 		    .chunk_size = child->chunk_size,
@@ -1528,8 +2027,7 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 		if (dk->i_ino != dir->i_ino)
 			break;
 
-		inode_t *child =
-		    &ctx.inodes[(*(uint64_t *)v.mv_data) / ctx.nprocs];
+		inode_t *child = &ctx.inodes[(*(uint64_t *)v.mv_data)];
 
 		if (S_ISDIR(child->mode) && ctx.rank != 0) {
 			rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
@@ -1636,15 +2134,28 @@ fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 			  ucs_status_string(status));
 		return (-1);
 	}
-	ucp_am_handler_param_t inode_unlink_param = {
+	ucp_am_handler_param_t dir_unlink_param = {
 	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
 			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
-	    .id = RPC_INODE_UNLINK_REQ,
-	    .cb = fs_rpc_inode_unlink_recv,
+	    .id = RPC_DIR_UNLINK_REQ,
+	    .cb = fs_rpc_dir_unlink_recv,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx.ucp_worker, &inode_unlink_param)) != UCS_OK) {
+		 ctx.ucp_worker, &dir_unlink_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(unlink) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t file_unlink_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_FILE_UNLINK_REQ,
+	    .cb = fs_rpc_file_unlink_recv,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 ctx.ucp_worker, &file_unlink_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(unlink) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1688,15 +2199,28 @@ fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 			  ucs_status_string(status));
 		return (-1);
 	}
-	ucp_am_handler_param_t dir_move_param = {
+	ucp_am_handler_param_t dir_rename_param = {
 	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
 			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
-	    .id = RPC_RENAME_REQ,
-	    .cb = fs_rpc_rename_recv,
+	    .id = RPC_DIR_RENAME_REQ,
+	    .cb = fs_rpc_dir_rename_recv,
 	};
 	if ((status = ucp_worker_set_am_recv_handler(
-		 ctx.ucp_worker, &dir_move_param)) != UCS_OK) {
+		 ctx.ucp_worker, &dir_rename_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(dir move) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t file_rename_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_FILE_RENAME_REQ,
+	    .cb = fs_rpc_file_rename_recv,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 ctx.ucp_worker, &file_rename_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(dir move) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1754,15 +2278,28 @@ fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 			  ucs_status_string(status));
 		return (-1);
 	}
-	ucp_am_handler_param_t link_param = {
+	ucp_am_handler_param_t file_link_param = {
 	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
 			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
 			  UCP_AM_HANDLER_PARAM_FIELD_CB,
-	    .id = RPC_INODE_LINK_REQ,
-	    .cb = fs_rpc_inode_link_recv,
+	    .id = RPC_FILE_LINK_REQ,
+	    .cb = fs_rpc_file_link_recv,
 	};
-	if ((status = ucp_worker_set_am_recv_handler(ctx.ucp_worker,
-						     &link_param)) != UCS_OK) {
+	if ((status = ucp_worker_set_am_recv_handler(
+		 ctx.ucp_worker, &file_link_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(link) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t dir_link_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_DIR_LINK_REQ,
+	    .cb = fs_rpc_dir_link_recv,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 ctx.ucp_worker, &dir_link_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(link) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
@@ -1847,6 +2384,41 @@ fs_server_get_address(void **addr, size_t *addr_len)
 		return (-1);
 	}
 	return (0);
+}
+
+static void
+ep_err_cb(void *arg, ucp_ep_h ep, ucs_status_t status)
+{
+	log_error("error handling callback was invoked with status %s",
+		  ucs_status_string(status));
+}
+
+void
+fs_server_set_addresses(void *addr, size_t addr_len, size_t len)
+{
+	ucs_status_t status;
+	ucp_address_t *ucp_addr =
+	    (ucp_address_t *)(addr + addr_len * ((ctx.rank + 1) % ctx.nprocs));
+	if (ctx.nprocs > 1) {
+		ucp_ep_params_t ucp_ep_params = {
+		    .field_mask = UCP_EP_PARAM_FIELD_ERR_HANDLER |
+				  UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE |
+				  UCP_EP_PARAM_FIELD_REMOTE_ADDRESS,
+		    .err_handler =
+			{
+			    .arg = NULL,
+			    .cb = ep_err_cb,
+			},
+		    .err_mode = UCP_ERR_HANDLING_MODE_NONE,
+		    .address = ucp_addr,
+		};
+		if ((status = ucp_ep_create(ctx.ucp_worker, &ucp_ep_params,
+					    &ctx.ucp_next_ep)) != UCS_OK) {
+			log_fatal("ucp_ep_create() failed: %s",
+				  ucs_status_string(status));
+			return;
+		}
+	}
 }
 
 void
