@@ -717,6 +717,58 @@ TEST(FinchfsTest, Getdents)
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
+struct finchfs_dirent {
+	uint64_t d_ino;
+	uint64_t d_off;
+	uint16_t d_reclen;
+	char pad;
+	char d_name[];
+};
+
+TEST(FinchfsTest, Getdents2)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/createat2", 0777), 0);
+	for (int i = 0; i < 10000; i++) {
+		char filename[32];
+		snprintf(filename, sizeof(filename), "/createat2/file%05d", i);
+		int fd = finchfs_create(filename, O_RDWR, S_IRWXU);
+		EXPECT_EQ(fd, 0);
+		finchfs_close(fd);
+	}
+	int dirfd;
+	dirfd = finchfs_open("/createat2", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	char buf[1024];
+	size_t cnt = 0;
+
+	while (1) {
+		int nread = finchfs_getdents(dirfd, buf, sizeof(buf));
+		if (nread < 0) {
+			FAIL() << "getdents failed: " << nread;
+			break;
+		}
+		if (nread == 0) {
+			break;
+		}
+		int offset = 0;
+		while (offset < nread) {
+			struct finchfs_dirent *d =
+			    (struct finchfs_dirent *)(buf + offset);
+
+			printf("name=%s ino=%llu\n", d->d_name,
+			       (unsigned long long)d->d_ino);
+
+			offset += d->d_reclen;
+			cnt++;
+		}
+	}
+	EXPECT_EQ(cnt, 10000);
+
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
 TEST(FinchfsTest, Mkdirat)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);

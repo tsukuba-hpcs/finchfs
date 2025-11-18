@@ -1667,7 +1667,7 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 		ent = (struct finchfs_dirent *)(user_data->buf + rhdr->count);
 		if (rhdr->count + sizeof(struct finchfs_dirent) + name_len >
 		    hdr->count) {
-			rhdr->ret = FINCH_INPROGRESS;
+			rhdr->ret = FINCH_CONTINUE;
 			break;
 		}
 		rhdr->ret = FINCH_OK;
@@ -1689,7 +1689,8 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 	}
 
 out:
-	log_debug("fs_rpc_getdents_recv() sending count=%d", rhdr->count);
+	log_debug("fs_rpc_getdents_recv() sending count=%d ret=%d", rhdr->count,
+		  rhdr->ret);
 
 	ucs_status_ptr_t req = ucp_am_send_nbx(
 	    param->reply_ep, RPC_GETDENTS_REP, rhdr, sizeof(*rhdr),

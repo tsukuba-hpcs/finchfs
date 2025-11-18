@@ -1101,7 +1101,7 @@ finchfs_getdents(int fd, void *dirp, size_t count)
 			fd_table[fd].getdents_state.pos = 0;
 			c = count;
 			continue;
-		case FINCH_INPROGRESS:
+		case FINCH_CONTINUE:
 			return (c);
 		case FINCH_OK:
 			fd_table[fd].getdents_state.rank++;

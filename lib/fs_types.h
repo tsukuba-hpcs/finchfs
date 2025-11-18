@@ -74,6 +74,7 @@ typedef struct {
 typedef enum {
 	FINCH_OK = 0,
 	FINCH_INPROGRESS = 1,
+	FINCH_CONTINUE = 2,
 	FINCH_ENOENT = -2,
 	FINCH_EIO = -5,
 	FINCH_EEXIST = -17,
