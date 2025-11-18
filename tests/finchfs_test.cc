@@ -812,18 +812,23 @@ TEST(FinchfsTest, Linkat1)
 TEST(FinchfsTest, Linkat2)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
-	int dirfd;
-	dirfd = finchfs_open("/linkat", O_RDWR | O_DIRECTORY);
-	EXPECT_EQ(dirfd, 0);
+	EXPECT_EQ(finchfs_mkdir("/linkatX", 0777), 0);
+	EXPECT_EQ(finchfs_mkdir("/linkatY", 0777), 0);
+	int fdx, fdy;
+	fdx = finchfs_open("/linkatX", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(fdx, 0);
+	fdy = finchfs_open("/linkatY", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(fdy, 1);
 	int fd;
-	fd = finchfs_createat(dirfd, "childfile1", O_RDWR | O_CREAT, S_IRWXU);
-	EXPECT_EQ(fd, 1);
+	fd = finchfs_createat(fdx, "childfile", O_RDWR | O_CREAT, S_IRWXU);
+	EXPECT_EQ(fd, 2);
 	EXPECT_EQ(finchfs_close(fd), 0);
-	EXPECT_EQ(finchfs_linkat(dirfd, "childfile1", dirfd, "childfile2"), 0);
-	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_linkat(fdx, "childfile", fdy, "childfile"), 0);
+	EXPECT_EQ(finchfs_close(fdx), 0);
+	EXPECT_EQ(finchfs_close(fdy), 0);
 	struct stat st1, st2;
-	EXPECT_EQ(finchfs_stat("/linkat/childfile1", &st1), 0);
-	EXPECT_EQ(finchfs_stat("/linkat/childfile2", &st2), 0);
+	EXPECT_EQ(finchfs_stat("/linkatX/childfile", &st1), 0);
+	EXPECT_EQ(finchfs_stat("/linkatY/childfile", &st2), 0);
 	EXPECT_EQ(st1.st_ino, st2.st_ino);
 	EXPECT_EQ(st1.st_nlink, 2);
 	EXPECT_EQ(st2.st_nlink, 2);
@@ -859,14 +864,15 @@ TEST(FinchfsTest, Root)
 TEST(FinchfsTest, LinkFile)
 {
 	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/linktest", S_IRWXU), 0);
 	int fd;
-	fd = finchfs_create("/linkfile1", O_RDWR, S_IRWXU);
+	fd = finchfs_create("/linkfile", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	EXPECT_EQ(finchfs_close(fd), 0);
-	EXPECT_EQ(finchfs_link("/linkfile1", "/linkfile2"), 0);
+	EXPECT_EQ(finchfs_link("/linkfile", "/linktest/linkfile"), 0);
 	struct stat st1, st2;
-	EXPECT_EQ(finchfs_stat("/linkfile1", &st1), 0);
-	EXPECT_EQ(finchfs_stat("/linkfile2", &st2), 0);
+	EXPECT_EQ(finchfs_stat("/linkfile", &st1), 0);
+	EXPECT_EQ(finchfs_stat("/linktest/linkfile", &st2), 0);
 	EXPECT_EQ(st1.st_ino, st2.st_ino);
 	EXPECT_EQ(st1.st_nlink, 2);
 	EXPECT_EQ(st2.st_nlink, 2);

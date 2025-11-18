@@ -375,7 +375,7 @@ fs_rpc_mkdir_recv(void *arg, const void *header, size_t header_length,
 	}
 out:
 	rh->ring++;
-	if (ctx.nprocs == 1) {
+	if (ctx.nprocs == 1 || (h->ring == 0 && rh->relay_ret != FINCH_OK)) {
 		iov_req_t *old = user_data;
 		user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
 		user_data->header = malloc(header_length);
@@ -663,7 +663,7 @@ fs_rpc_dir_unlink_recv(void *arg, const void *header, size_t header_length,
 	}
 out:
 	rh->ring++;
-	if (ctx.nprocs == 1) {
+	if (ctx.nprocs == 1 || (h->ring == 0 && rh->relay_ret != FINCH_OK)) {
 		iov_req_t *old = user_data;
 		user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
 		user_data->header = malloc(header_length);
@@ -1155,7 +1155,7 @@ fs_rpc_dir_rename_recv(void *arg, const void *header, size_t header_length,
 	}
 out:
 	rh->ring++;
-	if (ctx.nprocs == 1) {
+	if (ctx.nprocs == 1 || (h->ring == 0 && rh->relay_ret != FINCH_OK)) {
 		iov_req_t *old = user_data;
 		user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
 		user_data->header = malloc(header_length);
@@ -1521,7 +1521,7 @@ fs_rpc_dir_link_recv(void *arg, const void *header, size_t header_length,
 			if (!S_ISDIR(inode->mode)) {
 				log_debug("fs_rpc_link_recv() hard link "
 					  "to file not allowed");
-				rh->relay_ret = FINCH_EISDIR;
+				rh->relay_ret = FINCH_ENOTDIR;
 				mdb_txn_abort(txn);
 				goto out;
 			}
@@ -1539,7 +1539,7 @@ fs_rpc_dir_link_recv(void *arg, const void *header, size_t header_length,
 	}
 out:
 	rh->ring++;
-	if (ctx.nprocs == 1) {
+	if (ctx.nprocs == 1 || (h->ring == 0 && rh->relay_ret != FINCH_OK)) {
 		iov_req_t *old = user_data;
 		user_data = malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t));
 		user_data->header = malloc(header_length);
