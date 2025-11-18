@@ -209,52 +209,6 @@ fs_rpc_inode_read_reply(void *arg, const void *header, size_t header_length,
 
 typedef struct {
 	int ret;
-	void *arg;
-	void (*filler)(void *, const char *, const struct stat *);
-	readdir_header_t header;
-} readdir_handle_t;
-
-ucs_status_t
-fs_rpc_readdir_reply(void *arg, const void *header, size_t header_length,
-		     void *data, size_t length,
-		     const ucp_am_recv_param_t *param)
-{
-	readdir_header_t *hdr = (readdir_header_t *)header;
-	readdir_handle_t *handle = hdr->handle;
-	log_debug("fs_rpc_readdir_reply: entry_count=%d", hdr->entry_count);
-	char *p = (char *)data;
-	if (hdr->ret == FINCH_OK || hdr->ret == FINCH_INPROGRESS) {
-		for (int i = 0; i < hdr->entry_count; i++) {
-			readdir_entry_t *ent = (readdir_entry_t *)p;
-			p += sizeof(readdir_entry_t) + ent->path_len;
-			struct stat st;
-			st.st_mode = ent->mode;
-			st.st_uid = getuid();
-			st.st_gid = getgid();
-			st.st_size = ent->size;
-			st.st_mtim = ent->mtime;
-			st.st_ctim = ent->ctime;
-			st.st_nlink = 1;
-			st.st_ino = ent->i_ino;
-			st.st_blksize = ent->chunk_size;
-			st.st_blocks = NUM_BLOCKS(ent->size);
-
-			handle->filler(handle->arg, ent->path, &st);
-		}
-	}
-	if (hdr->ret == FINCH_OK) {
-		log_debug("fs_rpc_readdir_reply: finished");
-	} else if (hdr->ret == FINCH_INPROGRESS) {
-		log_debug("fs_rpc_readdir_reply: inprogress");
-	} else {
-		log_debug("fs_rpc_readdir_reply: error");
-	}
-	handle->ret = hdr->ret;
-	return (UCS_OK);
-}
-
-typedef struct {
-	int ret;
 	void *buf;
 	getdents_header_t header;
 	uint64_t pos;
@@ -439,20 +393,6 @@ fs_client_init(char *addrfile, int *nvprocs)
 		log_error(
 		    "ucp_worker_set_am_recv_handler(inode read) failed: %s",
 		    ucs_status_string(status));
-		return (-1);
-	}
-	ucp_am_handler_param_t readdir_reply_param = {
-	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
-			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
-			  UCP_AM_HANDLER_PARAM_FIELD_CB,
-	    .id = RPC_READDIR_REP,
-	    .cb = fs_rpc_readdir_reply,
-	    .arg = NULL,
-	};
-	if ((status = ucp_worker_set_am_recv_handler(
-		 env.ucp_worker, &readdir_reply_param)) != UCS_OK) {
-		log_error("ucp_worker_set_am_recv_handler(readdir) failed: %s",
-			  ucs_status_string(status));
 		return (-1);
 	}
 	ucp_am_handler_param_t fsync_reply_param = {
