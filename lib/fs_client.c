@@ -1481,14 +1481,15 @@ fs_rpc_getdents(int target, uint64_t i_ino, uint64_t *pos, void *buf,
 	iov[0].buffer = &i_ino;
 	iov[0].length = sizeof(i_ino);
 
-	getdents_handle_t handle = {.ret = FINCH_INPROGRESS,
-				    .buf = buf,
-				    .header = {
-					.count = *count,
-					.pos = *pos,
-					.ret = FINCH_INPROGRESS,
-					.handle = &handle,
-				    }};
+	getdents_header_t header = {
+	    .count = *count,
+	    .pos = *pos,
+	    .ret = FINCH_INPROGRESS,
+	};
+
+	getdents_handle_t handle = {
+	    .ret = FINCH_INPROGRESS, .buf = buf, .header = header};
+	handle.header.handle = &handle;
 	int *ret_addr = &handle.ret;
 
 	ucp_request_param_t rparam = {

@@ -810,14 +810,12 @@ fs_rpc_inode_stat_update_recv(void *arg, const void *header,
 		  i_ino, ssize >> 3);
 
 	if (ssize & 1) {
-		// Close operation: decrement reference count
 		inode->i_count--;
 		if (inode->size < (ssize >> 3)) {
 			inode->size = ssize >> 3;
 		}
 		timespec_get(&inode->mtime, TIME_UTC);
 	} else {
-		// Fsync operation: update size and return current size
 		if (inode->size < (ssize >> 3)) {
 			inode->size = ssize >> 3;
 		}
@@ -1577,12 +1575,17 @@ struct finchfs_dirent {
 	char d_name[];
 };
 
+struct finchfs_pos {
+	MDB_txn *txn;
+	MDB_cursor *cur;
+};
+
 ucs_status_t
 fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 		     void *data, size_t length,
 		     const ucp_am_recv_param_t *param)
 {
-	uint64_t eid = *(uint64_t *)data;
+	uint64_t ino = *(uint64_t *)data;
 	getdents_header_t *hdr = (getdents_header_t *)header;
 
 	log_debug("fs_rpc_getdents_recv() called");
@@ -1604,28 +1607,34 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 	    .datatype = ucp_dt_make_contig(sizeof(char)),
 	    .user_data = user_data,
 	};
+	struct finchfs_pos *pos;
+	if (hdr->pos == 0) {
+		pos = malloc(sizeof(struct finchfs_pos));
+		if (mdb_txn_begin(ctx.mdb_env, NULL, MDB_RDONLY, &pos->txn)) {
+			log_error(
+			    "fs_rpc_getdents_recv() mdb_txn_begin() failed: %s",
+			    strerror(errno));
+			rhdr->ret = FINCH_EIO;
+			goto out;
+		}
+		if (mdb_cursor_open(pos->txn, ctx.dbi, &pos->cur)) {
+			log_error("fs_rpc_getdents_recv() mdb_cursor_open() "
+				  "failed: %s",
+				  strerror(errno));
+			mdb_txn_abort(pos->txn);
+			rhdr->ret = FINCH_EIO;
+			goto out;
+		}
+	} else {
+		pos = (struct finchfs_pos *)hdr->pos;
+	}
 
-	inode_t *dir = (inode_t *)eid;
+	inode_t *dir = &ctx.inodes[ino];
 	rhdr->ret = FINCH_ENOENT;
 	rhdr->count = 0;
-	rhdr->pos = 0;
+	rhdr->pos = (uint64_t)pos;
 
-	MDB_cursor *cur;
-	MDB_txn *txn;
 	MDB_val k, v;
-	if (mdb_txn_begin(ctx.mdb_env, NULL, MDB_RDONLY, &txn)) {
-		log_error("fs_rpc_getdents_recv() mdb_txn_begin() failed: %s",
-			  strerror(errno));
-		rhdr->ret = FINCH_EIO;
-		goto out;
-	}
-	if (mdb_cursor_open(txn, ctx.dbi, &cur)) {
-		log_error("fs_rpc_getdents_recv() mdb_cursor_open() failed: %s",
-			  strerror(errno));
-		mdb_txn_abort(txn);
-		rhdr->ret = FINCH_EIO;
-		goto out;
-	}
 
 	dentry_key_t dkey;
 	int rc;
@@ -1636,10 +1645,9 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 		k.mv_data = &dkey;
 		k.mv_size = sizeof(dentry_key_t);
 
-		rc = mdb_cursor_get(cur, &k, &v, MDB_SET_RANGE);
+		rc = mdb_cursor_get(pos->cur, &k, &v, MDB_SET_RANGE);
 	} else {
-		cur = (MDB_cursor *)hdr->pos;
-		rc = mdb_cursor_get(cur, &k, &v, MDB_GET_CURRENT);
+		rc = mdb_cursor_get(pos->cur, &k, &v, MDB_GET_CURRENT);
 	}
 
 	struct finchfs_dirent *ent = NULL;
@@ -1651,7 +1659,7 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 		inode_t *child = &ctx.inodes[(*(uint64_t *)v.mv_data)];
 
 		if (S_ISDIR(child->mode) && ctx.rank != 0) {
-			rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+			rc = mdb_cursor_get(pos->cur, &k, &v, MDB_NEXT);
 			continue;
 		}
 
@@ -1660,7 +1668,6 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 		if (rhdr->count + sizeof(struct finchfs_dirent) + name_len >
 		    hdr->count) {
 			rhdr->ret = FINCH_INPROGRESS;
-			rhdr->pos = (uint64_t)cur;
 			break;
 		}
 		rhdr->ret = FINCH_OK;
@@ -1669,14 +1676,17 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 		ent->d_off = rhdr->count;
 		ent->d_reclen = sizeof(struct finchfs_dirent) + name_len;
 		strcpy(ent->d_name, dk->name);
-		rc = mdb_cursor_get(cur, &k, &v, MDB_NEXT);
+		rc = mdb_cursor_get(pos->cur, &k, &v, MDB_NEXT);
 	}
 	if (ent != NULL) {
 		ent->d_off = 0;
 	}
 
-	mdb_cursor_close(cur);
-	mdb_txn_abort(txn);
+	if (rhdr->ret == FINCH_OK || rhdr->ret == FINCH_ENOENT) {
+		mdb_cursor_close(pos->cur);
+		mdb_txn_abort(pos->txn);
+		free(pos);
+	}
 
 out:
 	log_debug("fs_rpc_getdents_recv() sending count=%d", rhdr->count);
