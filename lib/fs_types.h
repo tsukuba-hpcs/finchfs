@@ -68,6 +68,14 @@ typedef struct {
 	void *reply_ep;
 } ring_header_t;
 
+typedef struct {
+	void *handle;
+	uint16_t ring;
+	int relay_ret;
+	uint64_t relay_ino;
+	void *reply_ep;
+} open_dir_header_t;
+
 /* Number of 512B blocks */
 #define NUM_BLOCKS(size) ((size + 511) / 512)
 

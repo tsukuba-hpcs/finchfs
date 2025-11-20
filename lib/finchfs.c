@@ -43,6 +43,7 @@ static struct fd_table {
 		int rank;
 		uint64_t pos;
 	} getdents_state;
+	void **dir_txns;
 } *fd_table;
 #define IS_NULL_STRING(str) (str == NULL || str[0] == '\0')
 
@@ -318,6 +319,7 @@ finchfs_create_chunk_size(const char *path, int32_t flags, mode_t mode,
 	fd_table[fd].pos = 0;
 	fd_table[fd].i_ino = 0;
 	fd_table[fd].size = 0;
+	fd_table[fd].dir_txns = NULL;
 	timespec_get(&fd_table[fd].mtime, TIME_UTC);
 	timespec_get(&fd_table[fd].ctime, TIME_UTC);
 
@@ -353,11 +355,14 @@ finchfs_open(const char *path, int32_t flags)
 	fd_table[fd].path = p;
 	fd_table[fd].access = flags & 0b11;
 	fd_table[fd].pos = 0;
+	fd_table[fd].dir_txns = malloc(sizeof(void *) * nvprocs);
 	if (flags & __O_DIRECTORY) {
-		ret = fs_rpc_inode_open_dir(0, p, &st, 1 << 4);
+		ret = fs_rpc_inode_open_dir(0, p, &st, fd_table[fd].dir_txns);
 		if (ret) {
 			free(fd_table[fd].path);
 			fd_table[fd].path = NULL;
+			free(fd_table[fd].dir_txns);
+			fd_table[fd].dir_txns = NULL;
 			return (-1);
 		}
 		fd_table[fd].getdents_state.rank = 0;
@@ -405,9 +410,13 @@ finchfs_close(int fd)
 		ret =
 		    fs_rpc_inode_close(fd_table[fd].path, fd_table[fd].i_ino,
 				       fd_table[fd].access, fd_table[fd].size);
+	} else {
+		ret = fs_rpc_inode_close_dir(fd_table[fd].dir_txns);
 	}
 	free(fd_table[fd].path);
 	fd_table[fd].path = NULL;
+	free(fd_table[fd].dir_txns);
+	fd_table[fd].dir_txns = NULL;
 	return (ret);
 }
 
@@ -863,10 +872,13 @@ finchfs_openat(int dirfd, const char *pathname, int flags)
 	fd_table[fd].access = flags & 0b11;
 	fd_table[fd].pos = 0;
 	if (flags & __O_DIRECTORY) {
-		ret = fs_rpc_inode_open_dir(base_ino, p, &st, 1 << 4);
+		ret = fs_rpc_inode_open_dir(base_ino, p, &st,
+					    fd_table[fd].dir_txns);
 		if (ret) {
 			free(fd_table[fd].path);
 			fd_table[fd].path = NULL;
+			free(fd_table[fd].dir_txns);
+			fd_table[fd].dir_txns = NULL;
 			return (-1);
 		}
 	} else {
@@ -1094,6 +1106,7 @@ finchfs_getdents(int fd, void *dirp, size_t count)
 	while (fd_table[fd].getdents_state.rank < nvprocs) {
 		ret = fs_rpc_getdents(
 		    fd_table[fd].getdents_state.rank, fd_table[fd].i_ino,
+		    fd_table[fd].dir_txns[fd_table[fd].getdents_state.rank],
 		    &fd_table[fd].getdents_state.pos, dirp, &c);
 		switch (ret) {
 		case FINCH_ENOENT:

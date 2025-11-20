@@ -88,10 +88,11 @@ get_parent_and_filename(uint64_t base, char *filename, const char *path,
 	char *p = prev;
 	int path_len = strlen(path) + 1;
 	dentry_key_t dkey;
-	if (mdb_txn_begin(ctx->mdb_env, NULL, MDB_RDONLY, &txn)) {
+	int rc;
+	if ((rc = mdb_txn_begin(ctx->mdb_env, NULL, MDB_RDONLY, &txn)) != 0) {
 		log_error(
 		    "get_parent_and_filename() mdb_txn_begin() failed: %s",
-		    strerror(errno));
+		    strerror(rc));
 		return (NULL);
 	}
 	dkey.i_ino = e->i_ino;
@@ -452,16 +453,17 @@ fs_rpc_inode_create_recv(void *arg, const void *header, size_t header_length,
 		dentry_key_t dkey;
 		MDB_txn *txn;
 		MDB_val key, data;
+		int rc;
 		dkey.i_ino = parent->i_ino;
 		key.mv_data = &dkey;
 		key.mv_size = sizeof(dentry_key_t);
 		memcpy(dkey.name, filename, strlen(filename) + 1);
 		for (int i = strlen(filename) + 1; i < sizeof(dkey.name); i++)
 			dkey.name[i] = '\0';
-		if (mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) {
+		if ((rc = mdb_txn_begin(ctx.mdb_env, NULL, 0, &txn)) != 0) {
 			log_error("fs_rpc_inode_create_recv() mdb_txn_begin() "
 				  "failed: %s",
-				  strerror(errno));
+				  strerror(rc));
 			*(int *)(user_data->iov[0].buffer) = FINCH_EIO;
 			goto out;
 		}
@@ -691,6 +693,165 @@ out:
 	status = post_iov_req(ctx.ucp_next_ep, RPC_DIR_UNLINK_REQ, user_data,
 			      header_length);
 	return (status);
+}
+
+ucs_status_t
+fs_rpc_dir_open_recv(void *arg, const void *header, size_t header_length,
+		     void *data, size_t length,
+		     const ucp_am_recv_param_t *param)
+{
+	open_dir_header_t *h = (open_dir_header_t *)header;
+	MDB_txn *txn = NULL;
+	if (h->ring == 0) {
+		uint64_t base;
+		char *path;
+		char *p = (char *)data;
+		base = *(uint64_t *)p;
+		p += sizeof(base);
+		path = (char *)p;
+
+		inode_t *dir = get_dir_entry(base, path, &ctx);
+
+		if (dir == NULL) {
+			log_debug("fs_rpc_dir_open_recv() path=%s does not "
+				  "exist",
+				  path);
+			h->relay_ino = 0;
+			h->relay_ret = FINCH_ENOENT;
+		} else {
+			h->relay_ino = dir->i_ino;
+			h->relay_ret = FINCH_OK;
+			if (mdb_txn_begin(ctx.mdb_env, NULL, MDB_RDONLY,
+					  &txn)) {
+				log_error("fs_rpc_dir_open_recv() "
+					  "mdb_txn_begin() failed: %s",
+					  strerror(errno));
+				h->relay_ino = 0;
+				h->relay_ret = FINCH_EIO;
+			}
+		}
+		if (ctx.nprocs == 1 || h->relay_ret != FINCH_OK) {
+			fs_stat_t st;
+			if (dir != NULL) {
+				st.chunk_size = dir->chunk_size;
+				st.i_ino = dir->i_ino;
+				st.mode = dir->mode;
+				st.mtime = dir->mtime;
+				st.ctime = dir->ctime;
+				st.size = dir->size;
+				st.nlink = dir->i_nlink;
+			}
+			iov_req_t *user_data = malloc(sizeof(iov_req_t) +
+						      sizeof(ucp_dt_iov_t) * 4);
+			user_data->header = malloc(header_length);
+			memcpy(user_data->header, header, header_length);
+			user_data->n = 4;
+			user_data->iov[0].buffer = malloc(sizeof(int));
+			user_data->iov[0].length = sizeof(int);
+			*(int *)(user_data->iov[0].buffer) = h->relay_ret;
+			user_data->iov[1].buffer = malloc(sizeof(fs_stat_t));
+			user_data->iov[1].length = sizeof(fs_stat_t);
+			memcpy(user_data->iov[1].buffer, &st,
+			       sizeof(fs_stat_t));
+			user_data->iov[2].buffer = malloc(sizeof(uint16_t));
+			user_data->iov[2].length = sizeof(uint16_t);
+			*(uint16_t *)(user_data->iov[2].buffer) = 1;
+			user_data->iov[3].buffer = malloc(sizeof(MDB_txn *));
+			user_data->iov[3].length = sizeof(MDB_txn *);
+			*(MDB_txn **)(user_data->iov[3].buffer) = txn;
+
+			ucs_status_t status;
+			status = post_iov_req(param->reply_ep, RPC_DIR_OPEN_REP,
+					      user_data, header_length);
+			return (status);
+		} else {
+			h->ring++;
+			h->reply_ep = param->reply_ep;
+			iov_req_t *user_data = malloc(sizeof(iov_req_t) +
+						      sizeof(ucp_dt_iov_t) * 1);
+			user_data->header = malloc(header_length);
+			memcpy(user_data->header, header, header_length);
+			user_data->n = 1;
+			user_data->iov[0].buffer = malloc(sizeof(MDB_txn *));
+			user_data->iov[0].length = sizeof(MDB_txn *);
+			*(MDB_txn **)(user_data->iov[0].buffer) = txn;
+			ucs_status_t status;
+			status = post_iov_req(ctx.ucp_next_ep, RPC_DIR_OPEN_REQ,
+					      user_data, header_length);
+			return (status);
+		}
+	}
+	if (h->ring == ctx.nprocs) {
+		inode_t *dir = &ctx.inodes[h->relay_ino];
+		fs_stat_t st;
+		st.chunk_size = dir->chunk_size;
+		st.i_ino = dir->i_ino;
+		st.mode = dir->mode;
+		st.mtime = dir->mtime;
+		st.ctime = dir->ctime;
+		st.size = dir->size;
+		st.nlink = dir->i_nlink;
+		iov_req_t *user_data =
+		    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 4);
+		user_data->header = malloc(header_length);
+		memcpy(user_data->header, header, header_length);
+		user_data->n = 4;
+		user_data->iov[0].buffer = malloc(sizeof(int));
+		user_data->iov[0].length = sizeof(int);
+		*(int *)(user_data->iov[0].buffer) = h->relay_ret;
+		user_data->iov[1].buffer = malloc(sizeof(fs_stat_t));
+		user_data->iov[1].length = sizeof(fs_stat_t);
+		memcpy(user_data->iov[1].buffer, &st, sizeof(fs_stat_t));
+		user_data->iov[2].buffer = malloc(sizeof(uint16_t));
+		user_data->iov[2].length = sizeof(uint16_t);
+		*(uint16_t *)(user_data->iov[2].buffer) = h->ring;
+		user_data->iov[3].buffer = malloc(length);
+		user_data->iov[3].length = length;
+		memcpy(user_data->iov[3].buffer, data, length);
+		ucs_status_t status;
+		status = post_iov_req(h->reply_ep, RPC_DIR_OPEN_REP, user_data,
+				      header_length);
+		return (status);
+	}
+	iov_req_t *user_data =
+	    malloc(sizeof(iov_req_t) + sizeof(ucp_dt_iov_t) * 2);
+	user_data->header = malloc(header_length);
+	memcpy(user_data->header, header, header_length);
+	ring_header_t *rh = (ring_header_t *)user_data->header;
+	user_data->n = 2;
+	user_data->iov[0].buffer = malloc(length);
+	user_data->iov[0].length = length;
+	memcpy(user_data->iov[0].buffer, data, length);
+	user_data->iov[1].buffer = malloc(sizeof(MDB_txn *));
+	user_data->iov[1].length = sizeof(MDB_txn *);
+
+	if (mdb_txn_begin(ctx.mdb_env, NULL, MDB_RDONLY, &txn)) {
+		log_error("fs_rpc_dir_open_recv() mdb_txn_begin() failed: %s",
+			  strerror(errno));
+		rh->relay_ino = 0;
+		rh->relay_ret = FINCH_EIO;
+	}
+	*(MDB_txn **)(user_data->iov[1].buffer) = txn;
+	rh->ring++;
+	if (h->relay_ret != rh->relay_ret) {
+		log_fatal(
+		    "fs_rpc_dir_open_recv() inconsistent relay_ret ring=%u "
+		    "relay_ret=%d header_relay_ret=%d",
+		    h->ring, rh->relay_ret, h->relay_ret);
+	}
+	ucs_status_t status;
+	status = post_iov_req(ctx.ucp_next_ep, RPC_DIR_OPEN_REQ, user_data,
+			      header_length);
+	return (status);
+}
+
+ucs_status_t
+fs_rpc_dir_close_recv(void *arg, const void *header, size_t header_length,
+		      void *data, size_t length,
+		      const ucp_am_recv_param_t *param)
+{
+	mdb_txn_abort(*(MDB_txn **)data);
+	return UCS_OK;
 }
 
 ucs_status_t
@@ -1576,7 +1737,6 @@ struct finchfs_dirent {
 };
 
 struct finchfs_pos {
-	MDB_txn *txn;
 	MDB_cursor *cur;
 };
 
@@ -1585,7 +1745,12 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 		     void *data, size_t length,
 		     const ucp_am_recv_param_t *param)
 {
-	uint64_t ino = *(uint64_t *)data;
+	uint64_t ino;
+	MDB_txn *txn;
+	char *p = data;
+	ino = *(uint64_t *)p;
+	p += sizeof(uint64_t);
+	txn = *(MDB_txn **)p;
 	getdents_header_t *hdr = (getdents_header_t *)header;
 
 	log_debug("fs_rpc_getdents_recv() called");
@@ -1610,18 +1775,10 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 	struct finchfs_pos *pos;
 	if (hdr->pos == 0) {
 		pos = malloc(sizeof(struct finchfs_pos));
-		if (mdb_txn_begin(ctx.mdb_env, NULL, MDB_RDONLY, &pos->txn)) {
-			log_error(
-			    "fs_rpc_getdents_recv() mdb_txn_begin() failed: %s",
-			    strerror(errno));
-			rhdr->ret = FINCH_EIO;
-			goto out;
-		}
-		if (mdb_cursor_open(pos->txn, ctx.dbi, &pos->cur)) {
+		if (mdb_cursor_open(txn, ctx.dbi, &pos->cur)) {
 			log_error("fs_rpc_getdents_recv() mdb_cursor_open() "
 				  "failed: %s",
 				  strerror(errno));
-			mdb_txn_abort(pos->txn);
 			rhdr->ret = FINCH_EIO;
 			goto out;
 		}
@@ -1684,7 +1841,6 @@ fs_rpc_getdents_recv(void *arg, const void *header, size_t header_length,
 
 	if (rhdr->ret == FINCH_OK || rhdr->ret == FINCH_ENOENT) {
 		mdb_cursor_close(pos->cur);
-		mdb_txn_abort(pos->txn);
 		free(pos);
 	}
 
@@ -1910,6 +2066,32 @@ fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 			  ucs_status_string(status));
 		return (-1);
 	}
+	ucp_am_handler_param_t dir_open_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_DIR_OPEN_REQ,
+	    .cb = fs_rpc_dir_open_recv,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 ctx.ucp_worker, &dir_open_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(open) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t dir_close_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_DIR_CLOSE_REQ,
+	    .cb = fs_rpc_dir_close_recv,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 ctx.ucp_worker, &dir_close_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(close) failed: %s",
+			  ucs_status_string(status));
+		return (-1);
+	}
 
 	ctx.fs = fs_inode_init(db_dir);
 
@@ -1959,7 +2141,7 @@ fs_server_init(char *db_dir, int rank, int nprocs, int *shutdown)
 	mdb_env_create(&ctx.mdb_env);
 	mdb_env_set_maxdbs(ctx.mdb_env, 1);
 	mdb_env_set_mapsize(ctx.mdb_env, 1ULL << 33);
-	if (mdb_env_open(ctx.mdb_env, meta_dir, 0, 0666)) {
+	if (mdb_env_open(ctx.mdb_env, meta_dir, MDB_NOTLS, 0666)) {
 		log_fatal("fs_server_init() mdb_env_open(%s) failed: %s",
 			  meta_dir, strerror(errno));
 	}

@@ -85,6 +85,33 @@ fs_rpc_inode_stat_reply(void *arg, const void *header, size_t header_length,
 
 typedef struct {
 	int ret;
+	fs_stat_t st;
+	uint16_t n;
+	void *txns[];
+} inode_dir_open_handle_t;
+
+ucs_status_t
+fs_rpc_inode_dir_open_reply(void *arg, const void *header, size_t header_length,
+			    void *data, size_t length,
+			    const ucp_am_recv_param_t *param)
+{
+	inode_dir_open_handle_t *handle = *(inode_dir_open_handle_t **)header;
+	char *p = (char *)data;
+	handle->ret = *(int *)p;
+	p += sizeof(int);
+	handle->st = *(fs_stat_t *)p;
+	p += sizeof(fs_stat_t);
+	handle->n = *(uint16_t *)p;
+	p += sizeof(uint16_t);
+	for (int i = 0; i < handle->n; ++i) {
+		handle->txns[i] = *(void **)p;
+		p += sizeof(void *);
+	}
+	return (UCS_OK);
+}
+
+typedef struct {
+	int ret;
 	size_t size;
 } inode_chunk_stat_handle_t;
 
@@ -422,6 +449,20 @@ fs_client_init(char *addrfile, int *nvprocs)
 		 env.ucp_worker, &getdents_reply_param)) != UCS_OK) {
 		log_error("ucp_worker_set_am_recv_handler(getdents) failed: "
 			  "%s",
+			  ucs_status_string(status));
+		return (-1);
+	}
+	ucp_am_handler_param_t dir_open_param = {
+	    .field_mask = UCP_AM_HANDLER_PARAM_FIELD_ID |
+			  UCP_AM_HANDLER_PARAM_FIELD_ARG |
+			  UCP_AM_HANDLER_PARAM_FIELD_CB,
+	    .id = RPC_DIR_OPEN_REP,
+	    .cb = fs_rpc_inode_dir_open_reply,
+	    .arg = NULL,
+	};
+	if ((status = ucp_worker_set_am_recv_handler(
+		 env.ucp_worker, &dir_open_param)) != UCS_OK) {
+		log_error("ucp_worker_set_am_recv_handler(dir open) failed: %s",
 			  ucs_status_string(status));
 		return (-1);
 	}
@@ -1179,20 +1220,25 @@ fs_async_rpc_inode_read_wait(void **hdles, int nreqs, size_t size)
 
 int
 fs_rpc_inode_open_dir(uint64_t base_ino, const char *path, fs_stat_t *st,
-		      uint8_t open)
+		      void **dir_txn)
 {
-	ucp_dt_iov_t iov[3];
-	inode_stat_handle_t handle;
-	void *handle_addr = &handle;
-	int *ret_addr = &handle.ret;
+	ucp_dt_iov_t iov[2];
+	inode_dir_open_handle_t *handle = malloc(
+	    sizeof(inode_dir_open_handle_t) + sizeof(void *) * env.nvprocs);
+	int *ret_addr = &handle->ret;
+	open_dir_header_t header = {
+	    .handle = handle,
+	    .relay_ino = 0,
+	    .relay_ret = FINCH_OK,
+	    .reply_ep = NULL,
+	    .ring = 0,
+	};
 
 	iov[0].buffer = &base_ino;
 	iov[0].length = sizeof(uint64_t);
-	iov[1].buffer = &open;
-	iov[1].length = sizeof(open);
-	iov[2].buffer = (void *)path;
-	iov[2].length = strlen(path) + 1;
-	handle.ret = FINCH_INPROGRESS;
+	iov[1].buffer = (void *)path;
+	iov[1].length = strlen(path) + 1;
+	handle->ret = FINCH_INPROGRESS;
 
 	ucp_request_param_t rparam = {
 	    .op_attr_mask =
@@ -1202,8 +1248,8 @@ fs_rpc_inode_open_dir(uint64_t base_ino, const char *path, fs_stat_t *st,
 	};
 
 	ucs_status_ptr_t req =
-	    ucp_am_send_nbx(env.ucp_eps[0], RPC_INODE_STAT_REQ, &handle_addr,
-			    sizeof(handle_addr), &iov, 3, &rparam);
+	    ucp_am_send_nbx(env.ucp_eps[0], RPC_DIR_OPEN_REQ, &header,
+			    sizeof(header), iov, 2, &rparam);
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
 		ucp_worker_progress(env.ucp_worker);
@@ -1222,14 +1268,58 @@ fs_rpc_inode_open_dir(uint64_t base_ino, const char *path, fs_stat_t *st,
 	while (!all_ret_finish(&ret_addr, 1)) {
 		ucp_worker_progress(env.ucp_worker);
 	}
-	if (handle.ret != FINCH_OK) {
+	if (handle->ret != FINCH_OK) {
 		log_error("fs_rpc_inode_open_dir: stat() failed: %s",
-			  strerror(-handle.ret));
-		errno = -handle.ret;
+			  strerror(-handle->ret));
+		errno = -handle->ret;
 		return (-1);
 	}
-	*st = handle.st;
+	*st = handle->st;
+	for (int i = 0; i < env.nvprocs; i++) {
+		dir_txn[i] = handle->txns[i];
+	}
+	free(handle);
 	log_debug("fs_rpc_inode_open_dir: succeeded");
+	return (0);
+}
+
+int
+fs_rpc_inode_close_dir(void **txns)
+{
+	ucp_dt_iov_t *iov = malloc(sizeof(ucp_dt_iov_t) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		iov[i].buffer = &txns[i];
+		iov[i].length = sizeof(void *);
+	}
+	ucp_request_param_t rparam = {
+	    .op_attr_mask =
+		UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FIELD_FLAGS,
+	    .flags = UCP_AM_SEND_FLAG_EAGER,
+	    .datatype = UCP_DATATYPE_IOV,
+	};
+	ucs_status_ptr_t *reqs = malloc(sizeof(ucs_status_ptr_t) * env.nvprocs);
+	for (int i = 0; i < env.nvprocs; i++) {
+		reqs[i] = ucp_am_send_nbx(env.ucp_eps[i], RPC_DIR_CLOSE_REQ,
+					  NULL, 0, &iov[i], 1, &rparam);
+	}
+	ucs_status_t status;
+	while (!all_req_finish(reqs, env.nvprocs)) {
+		ucp_worker_progress(env.ucp_worker);
+	}
+	for (int i = 0; i < env.nvprocs; i++) {
+		if (reqs[i] != NULL) {
+			status = ucp_request_check_status(reqs[i]);
+			if (status != UCS_OK) {
+				log_error("fs_rpc_inode_close_dir: "
+					  "ucp_am_send_nbx() failed: %s",
+					  ucs_status_string(status));
+			}
+			ucp_request_free(reqs[i]);
+		}
+	}
+	free(reqs);
+	free(iov);
+	log_debug("fs_rpc_inode_close_dir: succeeded");
 	return (0);
 }
 
@@ -1474,12 +1564,14 @@ fs_rpc_dir_link(uint64_t old_base, const char *oldpath, uint64_t new_base,
 }
 
 int
-fs_rpc_getdents(int target, uint64_t i_ino, uint64_t *pos, void *buf,
+fs_rpc_getdents(int target, uint64_t i_ino, void *txn, uint64_t *pos, void *buf,
 		size_t *count)
 {
-	ucp_dt_iov_t iov[1];
+	ucp_dt_iov_t iov[2];
 	iov[0].buffer = &i_ino;
 	iov[0].length = sizeof(i_ino);
+	iov[1].buffer = &txn;
+	iov[1].length = sizeof(void *);
 
 	getdents_header_t header = {
 	    .count = *count,
@@ -1501,7 +1593,7 @@ fs_rpc_getdents(int target, uint64_t i_ino, uint64_t *pos, void *buf,
 
 	ucs_status_ptr_t req;
 	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_GETDENTS_REQ,
-			      &handle.header, sizeof(handle.header), iov, 1,
+			      &handle.header, sizeof(handle.header), iov, 2,
 			      &rparam);
 
 	ucs_status_t status;
