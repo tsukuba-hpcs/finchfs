@@ -412,11 +412,11 @@ finchfs_close(int fd)
 				       fd_table[fd].access, fd_table[fd].size);
 	} else {
 		ret = fs_rpc_inode_close_dir(fd_table[fd].dir_txns);
+		free(fd_table[fd].dir_txns);
+		fd_table[fd].dir_txns = NULL;
 	}
 	free(fd_table[fd].path);
 	fd_table[fd].path = NULL;
-	free(fd_table[fd].dir_txns);
-	fd_table[fd].dir_txns = NULL;
 	return (ret);
 }
 
