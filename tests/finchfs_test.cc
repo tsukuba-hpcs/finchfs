@@ -315,9 +315,10 @@ TEST(FinchfsTest, Rmdir)
 	fd = finchfs_create("/rmdir1/file1", O_RDWR, S_IRWXU);
 	EXPECT_EQ(fd, 0);
 	finchfs_close(fd);
+	EXPECT_EQ(finchfs_rmdir("/rmdir1"), -1);
+	EXPECT_EQ(errno, ENOTEMPTY);
+	EXPECT_EQ(finchfs_unlink("/rmdir1/file1"), 0);
 	EXPECT_EQ(finchfs_rmdir("/rmdir1"), 0);
-	fd = finchfs_open("/rmdir1/file1", O_RDWR);
-	EXPECT_EQ(fd, -1);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
@@ -739,11 +740,11 @@ TEST(FinchfsTest, Getdents2)
 	int dirfd;
 	dirfd = finchfs_open("/createat2", O_RDWR | O_DIRECTORY);
 	EXPECT_EQ(dirfd, 0);
-	char buf[1024];
+	char *buf = (char *)malloc(1024 * 1024);
 	size_t cnt = 0;
 
 	while (1) {
-		int nread = finchfs_getdents(dirfd, buf, sizeof(buf));
+		int nread = finchfs_getdents(dirfd, buf, 1024 * 1024);
 		if (nread < 0) {
 			FAIL() << "getdents failed: " << nread;
 			break;
@@ -756,15 +757,95 @@ TEST(FinchfsTest, Getdents2)
 			struct finchfs_dirent *d =
 			    (struct finchfs_dirent *)(buf + offset);
 
-			printf("name=%s ino=%llu\n", d->d_name,
-			       (unsigned long long)d->d_ino);
+			offset += d->d_reclen;
+			cnt++;
+		}
+	}
+	EXPECT_EQ(cnt, 10000);
+	free(buf);
+
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
+
+TEST(FinchfsTest, Getdents3)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/createat3", 0777), 0);
+	for (int i = 0; i < 10000; i++) {
+		char filename[32];
+		snprintf(filename, sizeof(filename), "/createat3/file%05d", i);
+		int fd = finchfs_create(filename, O_RDWR, S_IRWXU);
+		EXPECT_EQ(fd, 0);
+		finchfs_close(fd);
+	}
+	int dirfd;
+	dirfd = finchfs_open("/createat3", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	char *buf = (char *)malloc(1024);
+	size_t cnt = 0;
+
+	while (1) {
+		int nread = finchfs_getdents(dirfd, buf, 1024);
+		if (nread < 0) {
+			FAIL() << "getdents failed: " << nread;
+			break;
+		}
+		if (nread == 0) {
+			break;
+		}
+		int offset = 0;
+		while (offset < nread) {
+			struct finchfs_dirent *d =
+			    (struct finchfs_dirent *)(buf + offset);
 
 			offset += d->d_reclen;
 			cnt++;
 		}
 	}
 	EXPECT_EQ(cnt, 10000);
+	free(buf);
+	EXPECT_EQ(finchfs_close(dirfd), 0);
+	EXPECT_EQ(finchfs_term(), 0);
+}
 
+TEST(FinchfsTest, Getdents4)
+{
+	EXPECT_EQ(finchfs_init(NULL), 0);
+	EXPECT_EQ(finchfs_mkdir("/createat4", 0777), 0);
+	for (int i = 0; i < 10000; i++) {
+		char filename[32];
+		snprintf(filename, sizeof(filename), "/createat4/file%05d", i);
+		int fd = finchfs_create(filename, O_RDWR, S_IRWXU);
+		EXPECT_EQ(fd, 0);
+		finchfs_close(fd);
+	}
+	int dirfd;
+	dirfd = finchfs_open("/createat4", O_RDWR | O_DIRECTORY);
+	EXPECT_EQ(dirfd, 0);
+	char *buf = (char *)malloc(512);
+	size_t cnt = 0;
+
+	while (1) {
+		int nread = finchfs_getdents(dirfd, buf, 512);
+		if (nread < 0) {
+			FAIL() << "getdents failed: " << nread;
+			break;
+		}
+		if (nread == 0) {
+			break;
+		}
+		int offset = 0;
+		while (offset < nread) {
+			struct finchfs_dirent *d =
+			    (struct finchfs_dirent *)(buf + offset);
+
+			offset += d->d_reclen;
+			cnt++;
+		}
+	}
+	EXPECT_EQ(cnt, 10000);
+	free(buf);
 	EXPECT_EQ(finchfs_close(dirfd), 0);
 	EXPECT_EQ(finchfs_term(), 0);
 }
@@ -856,8 +937,8 @@ TEST(FinchfsTest, Linkat1)
 	EXPECT_EQ(finchfs_stat("/linkat/childdir1", &st1), 0);
 	EXPECT_EQ(finchfs_stat("/linkat/childdir2", &st2), 0);
 	EXPECT_EQ(st1.st_ino, st2.st_ino);
-	EXPECT_EQ(st1.st_nlink, 2);
-	EXPECT_EQ(st2.st_nlink, 2);
+	EXPECT_EQ(st1.st_nlink, 3);
+	EXPECT_EQ(st2.st_nlink, 3);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
@@ -940,8 +1021,8 @@ TEST(FinchfsTest, LinkDir)
 	EXPECT_EQ(finchfs_stat("/linkdir1", &st1), 0);
 	EXPECT_EQ(finchfs_stat("/linkdir2", &st2), 0);
 	EXPECT_EQ(st1.st_ino, st2.st_ino);
-	EXPECT_EQ(st1.st_nlink, 2);
-	EXPECT_EQ(st2.st_nlink, 2);
+	EXPECT_EQ(st1.st_nlink, 3);
+	EXPECT_EQ(st2.st_nlink, 3);
 	EXPECT_EQ(finchfs_term(), 0);
 }
 
@@ -1014,7 +1095,7 @@ TEST(HashTest, Hash3)
 }
 
 static void
-get_parent_and_filename(char *filename, const char *path)
+get_parent_and_entryname(char *filename, const char *path)
 {
 	char *prev = (char *)path;
 	char *p = prev;
@@ -1032,9 +1113,9 @@ get_parent_and_filename(char *filename, const char *path)
 TEST(HashTest, DIG_DIR)
 {
 	char filename[128];
-	get_parent_and_filename(filename, "foo/bar/baz");
+	get_parent_and_entryname(filename, "foo/bar/baz");
 	EXPECT_STREQ(filename, "baz");
-	get_parent_and_filename(filename, "foo");
+	get_parent_and_entryname(filename, "foo");
 	EXPECT_STREQ(filename, "foo");
 }
 

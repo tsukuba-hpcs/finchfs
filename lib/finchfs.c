@@ -655,7 +655,7 @@ finchfs_unlink(const char *path)
 	char *p;
 	log_debug("finchfs_unlink() called path=%s", path);
 	p = canonical_path(path);
-	ret = fs_rpc_file_unlink(0, p);
+	ret = fs_rpc_unlink(0, p);
 	free(p);
 	return (ret);
 }
@@ -680,7 +680,7 @@ finchfs_rmdir(const char *path)
 	char *p;
 	log_debug("finchfs_rmdir() called path=%s", path);
 	p = canonical_path(path);
-	ret = fs_rpc_dir_unlink(0, p);
+	ret = fs_rpc_rmdir(0, p);
 	free(p);
 	return (ret);
 }
@@ -988,9 +988,9 @@ finchfs_unlinkat(int dirfd, const char *pathname, int flags)
 	}
 	p = canonical_path(pathname);
 	if (flags & AT_REMOVEDIR) {
-		ret = fs_rpc_dir_unlink(base_ino, p);
+		ret = fs_rpc_rmdir(base_ino, p);
 	} else {
-		ret = fs_rpc_file_unlink(base_ino, p);
+		ret = fs_rpc_unlink(base_ino, p);
 	}
 	free(p);
 	return (ret);

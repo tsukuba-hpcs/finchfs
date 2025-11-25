@@ -242,6 +242,20 @@ typedef struct {
 	size_t count;
 } getdents_handle_t;
 
+static void
+fs_rpc_getdents_reply_rndv(void *request, ucs_status_t status, size_t length,
+			   void *user_data)
+{
+	log_debug("fs_rpc_getdents_reply_rndv: called header=%p", user_data);
+	getdents_header_t *header = (getdents_header_t *)user_data;
+	getdents_handle_t *handle = header->handle;
+	ucp_request_free(request);
+	handle->ret = header->ret;
+	handle->pos = header->pos;
+	handle->count = header->count;
+	free(header);
+}
+
 ucs_status_t
 fs_rpc_getdents_reply(void *arg, const void *header, size_t header_length,
 		      void *data, size_t length,
@@ -250,10 +264,47 @@ fs_rpc_getdents_reply(void *arg, const void *header, size_t header_length,
 	getdents_header_t *hdr = (getdents_header_t *)header;
 	getdents_handle_t *handle = hdr->handle;
 	log_debug("fs_rpc_getdents_reply: count=%zu", hdr->count);
-	memcpy(handle->buf, data, hdr->count);
-	handle->ret = hdr->ret;
-	handle->pos = hdr->pos;
-	handle->count = hdr->count;
+	if (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) {
+		getdents_header_t *user_data =
+		    malloc(sizeof(getdents_header_t));
+		memcpy(user_data, header, header_length);
+		ucp_request_param_t rparam = {
+		    .op_attr_mask = UCP_OP_ATTR_FIELD_DATATYPE |
+				    UCP_OP_ATTR_FIELD_CALLBACK |
+				    UCP_OP_ATTR_FIELD_USER_DATA,
+		    .cb =
+			{
+			    .recv_am = fs_rpc_getdents_reply_rndv,
+			},
+		    .datatype = ucp_dt_make_contig(sizeof(char)),
+		    .user_data = user_data,
+		};
+
+		ucs_status_ptr_t req = ucp_am_recv_data_nbx(
+		    env.ucp_worker, data, handle->buf, hdr->count, &rparam);
+		if (req == NULL) {
+			log_debug("ucp_am_recv_data_nbx completed immediately");
+			handle->ret = hdr->ret;
+			handle->pos = hdr->pos;
+			handle->count = hdr->count;
+			free(user_data);
+		} else if (UCS_PTR_IS_ERR(req)) {
+			log_error("ucp_am_recv_data_nbx() failed: %s",
+				  ucs_status_string(UCS_PTR_STATUS(req)));
+			handle->ret = FINCH_EIO;
+			handle->pos = 0;
+			handle->count = 0;
+			free(user_data);
+			ucs_status_t status = UCS_PTR_STATUS(req);
+			ucp_request_free(req);
+			return (status);
+		}
+	} else {
+		memcpy(handle->buf, data, hdr->count);
+		handle->ret = hdr->ret;
+		handle->pos = hdr->pos;
+		handle->count = hdr->count;
+	}
 	return (UCS_OK);
 }
 
@@ -682,7 +733,7 @@ fs_rpc_inode_create(uint64_t base_ino, const char *path, uint8_t flags,
 }
 
 int
-fs_rpc_file_unlink(uint64_t base_ino, const char *path)
+fs_rpc_unlink(uint64_t base_ino, const char *path)
 {
 	int target = path_to_target_hash(path, env.nvprocs);
 	ucp_dt_iov_t iov[2];
@@ -702,8 +753,8 @@ fs_rpc_file_unlink(uint64_t base_ino, const char *path)
 	};
 
 	ucs_status_ptr_t req;
-	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_FILE_UNLINK_REQ,
-			      &ret_addr, sizeof(ret_addr), iov, 2, &rparam);
+	req = ucp_am_send_nbx(env.ucp_eps[target], RPC_UNLINK_REQ, &ret_addr,
+			      sizeof(ret_addr), iov, 2, &rparam);
 
 	ucs_status_t status;
 	while (!all_req_finish(&req, 1)) {
@@ -735,7 +786,7 @@ fs_rpc_file_unlink(uint64_t base_ino, const char *path)
 }
 
 int
-fs_rpc_dir_unlink(uint64_t base_ino, const char *path)
+fs_rpc_rmdir(uint64_t base_ino, const char *path)
 {
 	ucp_dt_iov_t iov[2];
 	ring_header_t header;
@@ -757,7 +808,7 @@ fs_rpc_dir_unlink(uint64_t base_ino, const char *path)
 	};
 
 	ucs_status_ptr_t req =
-	    ucp_am_send_nbx(env.ucp_eps[0], RPC_DIR_UNLINK_REQ, &header,
+	    ucp_am_send_nbx(env.ucp_eps[0], RPC_RMDIR_BEGIN_REQ, &header,
 			    sizeof(header), iov, 2, &rparam);
 
 	while (!all_req_finish(&req, 1)) {

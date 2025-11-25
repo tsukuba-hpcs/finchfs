@@ -85,8 +85,10 @@ typedef enum {
 	FINCH_CONTINUE = 2,
 	FINCH_ENOENT = -2,
 	FINCH_EIO = -5,
+	FINCH_EBUSY = -16,
 	FINCH_EEXIST = -17,
 	FINCH_ENOTDIR = -20,
 	FINCH_EISDIR = -21,
 	FINCH_EINVAL = -22,
+	FINCH_ENOTEMPTY = -39,
 } finch_status_t;
